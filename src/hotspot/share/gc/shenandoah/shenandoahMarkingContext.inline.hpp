@@ -25,8 +25,9 @@
 #ifndef SHARE_GC_SHENANDOAH_SHENANDOAHMARKINGCONTEXT_INLINE_HPP
 #define SHARE_GC_SHENANDOAH_SHENANDOAHMARKINGCONTEXT_INLINE_HPP
 
-#include "gc/shenandoah/shenandoahMarkBitMap.inline.hpp"
 #include "gc/shenandoah/shenandoahMarkingContext.hpp"
+
+#include "gc/shenandoah/shenandoahMarkBitMap.inline.hpp"
 
 inline bool ShenandoahMarkingContext::mark_strong(oop obj, bool& was_upgraded) {
   return !allocated_after_mark_start(obj) && _mark_bit_map.mark_strong(cast_from_oop<HeapWord*>(obj), was_upgraded);
@@ -37,11 +38,19 @@ inline bool ShenandoahMarkingContext::mark_weak(oop obj) {
 }
 
 inline bool ShenandoahMarkingContext::is_marked(oop obj) const {
-  return allocated_after_mark_start(obj) || _mark_bit_map.is_marked(cast_from_oop<HeapWord *>(obj));
+  return is_marked(cast_from_oop<HeapWord*>(obj));
+}
+
+inline bool ShenandoahMarkingContext::is_marked(HeapWord* raw_obj) const {
+  return allocated_after_mark_start(raw_obj) || _mark_bit_map.is_marked(raw_obj);
 }
 
 inline bool ShenandoahMarkingContext::is_marked_strong(oop obj) const {
-  return allocated_after_mark_start(obj) || _mark_bit_map.is_marked_strong(cast_from_oop<HeapWord*>(obj));
+  return is_marked_strong(cast_from_oop<HeapWord*>(obj));
+}
+
+inline bool ShenandoahMarkingContext::is_marked_strong(HeapWord* raw_obj) const {
+  return allocated_after_mark_start(raw_obj) || _mark_bit_map.is_marked_strong(raw_obj);
 }
 
 inline bool ShenandoahMarkingContext::is_marked_weak(oop obj) const {

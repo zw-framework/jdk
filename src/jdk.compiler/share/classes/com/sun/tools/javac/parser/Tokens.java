@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,6 +27,7 @@ package com.sun.tools.javac.parser;
 
 import java.util.HashMap;
 import java.util.Locale;
+import java.util.function.Predicate;
 import java.util.Map;
 
 import com.sun.tools.javac.api.Formattable;
@@ -60,6 +61,7 @@ public class Tokens {
         return instance;
     }
 
+    @SuppressWarnings("this-escape")
     protected Tokens(Context context) {
         context.put(tokensKey, this);
         names = Names.instance(context);
@@ -90,7 +92,7 @@ public class Tokens {
      * This enum defines all tokens used by the javac scanner. A token is
      * optionally associated with a name.
      */
-    public enum TokenKind implements Formattable, Filter<TokenKind> {
+    public enum TokenKind implements Formattable, Predicate<TokenKind> {
         EOF(),
         ERROR(),
         IDENTIFIER(Tag.NAMED),
@@ -150,6 +152,7 @@ public class Tokens {
         DOUBLELITERAL(Tag.NUMERIC),
         CHARLITERAL(Tag.NUMERIC),
         STRINGLITERAL(Tag.STRING),
+        STRINGFRAGMENT(Tag.STRING),
         TRUE("true", Tag.NAMED),
         FALSE("false", Tag.NAMED),
         NULL("null", Tag.NAMED),
@@ -263,7 +266,7 @@ public class Tokens {
         }
 
         @Override
-        public boolean accepts(TokenKind that) {
+        public boolean test(TokenKind that) {
             return this == that;
         }
     }
@@ -271,12 +274,14 @@ public class Tokens {
     public interface Comment {
 
         enum CommentStyle {
-            LINE,
-            BLOCK,
-            JAVADOC,
+            LINE,            // starting with //   -- also known in JLS as "end-of-line comment"
+            BLOCK,           // starting with /*   -- also known in JLS as "traditional comment"
+            JAVADOC_LINE,    // starting with ///
+            JAVADOC_BLOCK    // starting with /**
         }
 
         String getText();
+        JCDiagnostic.DiagnosticPosition getPos();
         int getSourcePos(int index);
         CommentStyle getStyle();
         boolean isDeprecated();
@@ -318,14 +323,14 @@ public class Tokens {
 
         Token[] split(Tokens tokens) {
             if (kind.name.length() < 2 || kind.tag != Tag.DEFAULT) {
-                throw new AssertionError("Cant split" + kind);
+                throw new AssertionError("Can't split" + kind);
             }
 
             TokenKind t1 = tokens.lookupKind(kind.name.substring(0, 1));
             TokenKind t2 = tokens.lookupKind(kind.name.substring(1));
 
             if (t1 == null || t2 == null) {
-                throw new AssertionError("Cant split - bad subtokens");
+                throw new AssertionError("Can't split - bad subtokens");
             }
             return new Token[] {
                 new Token(t1, pos, pos + t1.name.length(), comments),
@@ -355,8 +360,8 @@ public class Tokens {
          * Preserve classic semantics - if multiple javadocs are found on the token
          * the last one is returned
          */
-        public Comment comment(Comment.CommentStyle style) {
-            List<Comment> comments = getComments(Comment.CommentStyle.JAVADOC);
+        public Comment docComment() {
+            List<Comment> comments = getDocComments();
             return comments.isEmpty() ?
                     null :
                     comments.head;
@@ -367,7 +372,7 @@ public class Tokens {
          * javadoc comment attached to this token contains the '@deprecated' string
          */
         public boolean deprecatedFlag() {
-            for (Comment c : getComments(Comment.CommentStyle.JAVADOC)) {
+            for (Comment c : getDocComments()) {
                 if (c.isDeprecated()) {
                     return true;
                 }
@@ -375,14 +380,15 @@ public class Tokens {
             return false;
         }
 
-        private List<Comment> getComments(Comment.CommentStyle style) {
+        private List<Comment> getDocComments() {
             if (comments == null) {
                 return List.nil();
             } else {
                 ListBuffer<Comment> buf = new ListBuffer<>();
                 for (Comment c : comments) {
-                    if (c.getStyle() == style) {
-                        buf.add(c);
+                    Comment.CommentStyle style = c.getStyle();
+                    switch (style) {
+                        case JAVADOC_BLOCK, JAVADOC_LINE -> buf.add(c);
                     }
                 }
                 return buf.toList();
@@ -390,7 +396,7 @@ public class Tokens {
         }
     }
 
-    final static class NamedToken extends Token {
+    static final class NamedToken extends Token {
         /** The name of this token */
         public final Name name;
 
@@ -432,7 +438,7 @@ public class Tokens {
         }
     }
 
-    final static class NumericToken extends StringToken {
+    static final class NumericToken extends StringToken {
         /** The 'radix' value of this token */
         public final int radix;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, 2024, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2020 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -46,8 +46,7 @@ TEST_VM(metaspace, misc_sizes)   {
   ASSERT_EQ(Settings::commit_granule_bytes(), Metaspace::commit_alignment());
   ASSERT_TRUE(is_aligned(Settings::virtual_space_node_default_word_size(),
               metaspace::chunklevel::MAX_CHUNK_WORD_SIZE));
-  ASSERT_EQ(Settings::virtual_space_node_default_word_size(),
-            metaspace::chunklevel::MAX_CHUNK_WORD_SIZE * 2);
+  ASSERT_EQ(Settings::virtual_space_node_default_word_size() * BytesPerWord, NOT_LP64(16) LP64_ONLY(64) * M);
   ASSERT_EQ(Settings::virtual_space_node_reserve_alignment_words(),
             Metaspace::reserve_alignment_words());
 
@@ -55,13 +54,21 @@ TEST_VM(metaspace, misc_sizes)   {
 
 TEST_VM(metaspace, misc_max_alloc_size)   {
 
-  // Make sure we can allocate what we promise to allocate
-  const size_t sz = Metaspace::max_allocation_word_size();
-  ClassLoaderData* cld = ClassLoaderData::the_null_class_loader_data();
-  MetaWord* p = cld->metaspace_non_null()->allocate(sz, Metaspace::NonClassType);
-  ASSERT_NOT_NULL(p);
-  cld->metaspace_non_null()->deallocate(p, sz, false);
-
+  // Make sure we can allocate what we promise to allocate...
+  for (int i = 0; i < 2; i ++) {
+    const bool in_class_space = (i == 0);
+    const Metaspace::MetadataType mdType = in_class_space ? Metaspace::ClassType : Metaspace::NonClassType;
+    const size_t sz = Metaspace::max_allocation_word_size();
+    ClassLoaderData* cld = ClassLoaderData::the_null_class_loader_data();
+    MetaWord* p = cld->metaspace_non_null()->allocate(sz, mdType);
+    if (p == nullptr) {
+      // Have we run into the GC threshold?
+      p = cld->metaspace_non_null()->expand_and_allocate(sz, mdType);
+      ASSERT_NOT_NULL(p);
+    }
+    // And also, successfully deallocate it.
+    cld->metaspace_non_null()->deallocate(p, sz);
+  }
 }
 
 TEST_VM(metaspace, chunklevel_utils)   {

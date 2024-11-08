@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -63,11 +63,10 @@ import jdk.jpackage.test.TKit;
 /*
  * @test
  * @summary jpackage with --license-file
- * @library ../helpers
+ * @library /test/jdk/tools/jpackage/helpers
  * @key jpackagePlatformPackage
  * @build jdk.jpackage.test.*
  * @compile LicenseTest.java
- * @modules jdk.jpackage/jdk.jpackage.internal
  * @run main/othervm/timeout=360 -Xmx512m jdk.jpackage.test.Main
  *  --jpt-run=LicenseTest.testCommon
  */
@@ -75,13 +74,12 @@ import jdk.jpackage.test.TKit;
 /*
  * @test
  * @summary jpackage with --license-file
- * @library ../helpers
+ * @library /test/jdk/tools/jpackage/helpers
  * @key jpackagePlatformPackage
  * @build jdk.jpackage.test.*
  * @compile LicenseTest.java
  * @requires (os.family == "linux")
  * @requires (jpackage.test.SQETest == null)
- * @modules jdk.jpackage/jdk.jpackage.internal
  * @run main/othervm/timeout=1440 -Xmx512m jdk.jpackage.test.Main
  *  --jpt-run=LicenseTest.testCustomDebianCopyright
  *  --jpt-run=LicenseTest.testCustomDebianCopyrightSubst
@@ -282,11 +280,11 @@ public class LicenseTest {
                 return licenseFileText("APPLICATION_COPYRIGHT",
                         "APPLICATION_LICENSE_TEXT");
             } else {
-                return expetedLicenseFileText();
+                return expectedLicenseFileText();
             }
         }
 
-        private List<String> expetedLicenseFileText() {
+        private List<String> expectedLicenseFileText() {
             return licenseFileText(copyright, licenseText);
         }
 
@@ -326,7 +324,7 @@ public class LicenseTest {
             })
             .addInstallVerifier(cmd -> {
                 Path installedLicenseFile = linuxLicenseFile(cmd);
-                TKit.assertStringListEquals(expetedLicenseFileText(),
+                TKit.assertStringListEquals(expectedLicenseFileText(),
                         DEBIAN_COPYRIGT_FILE_STRIPPER.apply(Files.readAllLines(
                                 installedLicenseFile)), String.format(
                                 "Check contents of package license file [%s] are the same as contents of source license file [%s]",

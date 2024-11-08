@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2014, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,18 +24,25 @@ package org.openjdk.bench.java.lang;
 
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.CompilerControl;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
 import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Warmup;
 
 import java.util.concurrent.TimeUnit;
 
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @State(Scope.Thread)
+@Warmup(iterations = 10, time = 500, timeUnit = TimeUnit.MILLISECONDS)
+@Measurement(iterations = 5, time = 1000, timeUnit = TimeUnit.MILLISECONDS)
+@Fork(3)
 public class StringBuilders {
 
     private String[] strings;
@@ -44,7 +51,9 @@ public class StringBuilders {
     private String[] str3p9p8;
     private String[] str22p40p31;
     private StringBuilder sbLatin1;
+    private StringBuilder sbLatin2;
     private StringBuilder sbUtf16;
+    private StringBuilder sbUtf17;
 
     @Setup
     public void setup() {
@@ -57,7 +66,9 @@ public class StringBuilders {
         str3p9p8 = new String[]{"123", "123456789", "12345678"};
         str22p40p31 = new String[]{"1234567890123456789012", "1234567890123456789012345678901234567890", "1234567890123456789012345678901"};
         sbLatin1 = new StringBuilder("Latin1 string");
+        sbLatin2 = new StringBuilder("Latin1 string");
         sbUtf16 = new StringBuilder("UTF-\uFF11\uFF16 string");
+        sbUtf17 = new StringBuilder("UTF-\uFF11\uFF16 string");
     }
 
     @Benchmark
@@ -215,34 +226,141 @@ public class StringBuilders {
 
 
     @Benchmark
-    public String toStringCharWithBool8() {
-        StringBuilder result = new StringBuilder();
-        result.append(true);
-        result.append(false);
-        result.append(true);
-        result.append(true);
-        result.append(false);
-        result.append(true);
-        result.append(false);
-        result.append(false);
-        return result.toString();
+    public int appendWithBool8Latin1() {
+        StringBuilder buf = sbLatin1;
+        buf.setLength(0);
+        buf.append(true);
+        buf.append(false);
+        buf.append(true);
+        buf.append(true);
+        buf.append(false);
+        buf.append(true);
+        buf.append(false);
+        buf.append(false);
+        return buf.length();
     }
 
 
     @Benchmark
-    public String toStringCharWithFloat8() {
-        StringBuilder result = new StringBuilder();
-        result.append(113.110F);
-        result.append(156456.36435637F);
-        result.append(65436434.64632F);
-        result.append(42654634.64540F);
-        result.append(63464351.64537F);
-        result.append(634564.645711F);
-        result.append(64547.64311F);
-        result.append(4763456341.64531F);
-        return result.toString();
+    public int appendWithBool8Utf16() {
+        StringBuilder buf = sbUtf16;
+        buf.setLength(0);
+        buf.append(true);
+        buf.append(false);
+        buf.append(true);
+        buf.append(true);
+        buf.append(false);
+        buf.append(true);
+        buf.append(false);
+        buf.append(false);
+        return buf.length();
     }
 
+
+    @Benchmark
+    public int appendWithNull8Latin1() {
+        StringBuilder buf = sbLatin1;
+        buf.setLength(0);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        return buf.length();
+    }
+
+
+    @Benchmark
+    public int appendWithNull8Utf16() {
+        StringBuilder buf = sbUtf16;
+        buf.setLength(0);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        buf.append((String) null);
+        return buf.length();
+    }
+
+
+    @Benchmark
+    public int appendWithFloat8Latin1() {
+        StringBuilder buf = sbLatin1;
+        buf.setLength(0);
+        buf.append(113.110F);
+        buf.append(156456.36435637F);
+        buf.append(65436434.64632F);
+        buf.append(42654634.64540F);
+        buf.append(63464351.64537F);
+        buf.append(634564.645711F);
+        buf.append(64547.64311F);
+        buf.append(4763456341.64531F);
+        return buf.length();
+    }
+
+
+    @Benchmark
+    public int appendWithFloat8Utf16() {
+        StringBuilder buf = sbUtf16;
+        buf.setLength(0);
+        buf.append(113.110F);
+        buf.append(156456.36435637F);
+        buf.append(65436434.64632F);
+        buf.append(42654634.64540F);
+        buf.append(63464351.64537F);
+        buf.append(634564.645711F);
+        buf.append(64547.64311F);
+        buf.append(4763456341.64531F);
+        return buf.length();
+    }
+
+
+    @Benchmark
+    public int appendWithDouble8Latin1() {
+        StringBuilder buf = sbLatin1;
+        buf.setLength(0);
+        buf.append(0.3005216476500575D);
+        buf.append(0.39727691577802204D);
+        buf.append(0.9869700323149287D);
+        buf.append(42654634.645403256D);
+        buf.append(63464351.645371353D);
+        buf.append(634564.645711246D);
+        buf.append(64547.6431172363D);
+        buf.append(4763456341.64531675D);
+        return buf.length();
+    }
+
+
+    @Benchmark
+    public int appendWithDouble8Utf16() {
+        StringBuilder buf = sbUtf16;
+        buf.setLength(0);
+        buf.append(0.3005216476500575D);
+        buf.append(0.39727691577802204D);
+        buf.append(0.9869700323149287D);
+        buf.append(42654634.645403256D);
+        buf.append(63464351.645371353D);
+        buf.append(634564.645711246D);
+        buf.append(64547.6431172363D);
+        buf.append(4763456341.64531675D);
+        return buf.length();
+    }
+
+    @Benchmark
+    public int compareToLatin1() {
+        return sbLatin1.compareTo(sbLatin2);
+    }
+
+    @Benchmark
+    public int compareToUTF16() {
+        return sbUtf16.compareTo(sbUtf17);
+    }
 
     @Benchmark
     public String toStringCharWithMixed8() {
@@ -330,6 +448,25 @@ public class StringBuilders {
                 endIndex).append(';').toString();
     }
 
+    public int charAt_index = 3;
+
+    @Benchmark
+    @CompilerControl(CompilerControl.Mode.DONT_INLINE)
+    public char charAtLatin1() {
+        return sbLatin1.charAt(charAt_index);
+    }
+
+    @Benchmark
+    @CompilerControl(CompilerControl.Mode.DONT_INLINE)
+    public char charAtUtf16() {
+        return sbUtf16.charAt(charAt_index);
+    }
+
+    @Benchmark
+    public String emptyToString(Data data) {
+        return data.sbEmpty.toString();
+    }
+
     @State(Scope.Thread)
     public static class Data {
         int i = 0;
@@ -346,6 +483,7 @@ public class StringBuilders {
             }
         }
 
+        StringBuilder sbEmpty;
         String str;
         String utf16Str;
         CharSequence cs;
@@ -364,6 +502,8 @@ public class StringBuilders {
         }
 
         private void generateData() {
+            sbEmpty = new StringBuilder(length);
+
             char[] chars = "abcdefghijklmnopqrstuvwxyz0123456789".toCharArray();
 
             StringBuilder sb = new StringBuilder(length);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -85,7 +85,7 @@ class ExchangeImpl {
         String m, URI u, Request req, long len, HttpConnection connection
     ) throws IOException {
         this.req = req;
-        this.reqHdrs = req.headers();
+        this.reqHdrs = Headers.of(req.headers());
         this.rspHdrs = new Headers();
         this.method = m;
         this.uri = u;
@@ -99,7 +99,7 @@ class ExchangeImpl {
     }
 
     public Headers getRequestHeaders () {
-        return new UnmodifiableHeaders (reqHdrs);
+        return reqHdrs;
     }
 
     public Headers getResponseHeaders () {
@@ -201,12 +201,13 @@ class ExchangeImpl {
     public void sendResponseHeaders (int rCode, long contentLen)
     throws IOException
     {
+        final Logger logger = server.getLogger();
         if (sentHeaders) {
             throw new IOException ("headers already sent");
         }
         this.rcode = rCode;
         String statusLine = "HTTP/1.1 "+rCode+Code.msg(rCode)+"\r\n";
-        OutputStream tmpout = new BufferedOutputStream (ros);
+        ByteArrayOutputStream tmpout = new ByteArrayOutputStream();
         PlaceholderOutputStream o = getPlaceholderResponseBody();
         tmpout.write (bytes(statusLine, 0), 0, statusLine.length());
         boolean noContentToSend = false; // assume there is content
@@ -220,7 +221,6 @@ class ExchangeImpl {
             ||(rCode == 304))          /* not modified */
         {
             if (contentLen != -1) {
-                Logger logger = server.getLogger();
                 String msg = "sendResponseHeaders: rCode = "+ rCode
                     + ": forcing contentLen = -1";
                 logger.log (Level.WARNING, msg);
@@ -234,13 +234,13 @@ class ExchangeImpl {
              * through this API, but should instead manually set the required
              * headers.*/
             if (contentLen >= 0) {
-                final Logger logger = server.getLogger();
                 String msg =
                     "sendResponseHeaders: being invoked with a content length for a HEAD request";
                 logger.log (Level.WARNING, msg);
             }
             noContentToSend = true;
             contentLen = 0;
+            o.setWrappedStream (new FixedLengthOutputStream (this, ros, contentLen));
         } else { /* not a HEAD request or 304 response */
             if (contentLen == 0) {
                 if (http10) {
@@ -271,7 +271,6 @@ class ExchangeImpl {
                     Optional.ofNullable(rspHdrs.get("Connection"))
                     .map(List::stream).orElse(Stream.empty());
             if (conheader.anyMatch("close"::equalsIgnoreCase)) {
-                Logger logger = server.getLogger();
                 logger.log (Level.DEBUG, "Connection: close requested by handler");
                 close = true;
             }
@@ -279,13 +278,12 @@ class ExchangeImpl {
 
         write (rspHdrs, tmpout);
         this.rspContentLen = contentLen;
-        tmpout.flush() ;
-        tmpout = null;
+        tmpout.writeTo(ros);
         sentHeaders = true;
+        logger.log(Level.TRACE, "Sent headers: noContentToSend=" + noContentToSend);
         if (noContentToSend) {
-            WriteFinishedEvent e = new WriteFinishedEvent (this);
-            server.addEvent (e);
-            closed = true;
+            ros.flush();
+            close();
         }
         server.logReply (rCode, req.requestLine(), null);
     }
@@ -379,7 +377,11 @@ class ExchangeImpl {
         if (attributes == null) {
             attributes = getHttpContext().getAttributes();
         }
-        attributes.put (name, value);
+        if (value != null) {
+            attributes.put (name, value);
+        } else {
+            attributes.remove (name);
+        }
     }
 
     public void setStreams (InputStream i, OutputStream o) {

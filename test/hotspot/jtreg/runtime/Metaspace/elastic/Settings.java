@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, 2024, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2020 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -23,18 +23,11 @@
  *
  */
 
-import sun.hotspot.WhiteBox;
+import jdk.test.whitebox.WhiteBox;
 
 public final class Settings {
 
-    public String reclaimPolicy = WhiteBox.getWhiteBox().getStringVMFlag("MetaspaceReclaimPolicy");
-    public boolean usesAllocationGuards = WhiteBox.getWhiteBox().getBooleanVMFlag("MetaspaceGuardAllocations");
-
-    final public boolean doesReclaim() {
-        return reclaimPolicy.equals("balanced") || reclaimPolicy.equals("aggessive");
-    }
-
-    final static long rootChunkWordSize = 512 * 1024;
+    final static long rootChunkWordSize = 2048 * 1024;
 
     static Settings theSettings;
 

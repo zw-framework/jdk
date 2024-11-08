@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,9 +33,8 @@ import jdk.jpackage.test.JPackageCommand;
 /*
  * @test
  * @summary test how app launcher handles unicode command line arguments
- * @library ../../../../helpers
+ * @library /test/jdk/tools/jpackage/helpers
  * @build jdk.jpackage.test.*
- * @modules jdk.jpackage/jdk.jpackage.internal
  * @compile UnicodeArgsTest.java
  * @requires (os.family == "windows")
  * @run main/othervm/timeout=720 -Xmx512m jdk.jpackage.test.Main
@@ -48,7 +47,19 @@ public final class UnicodeArgsTest {
     @Parameter("false")
     @Test
     public void test8246042(boolean onCommandLine) {
-        final String testString = new String(Character.toChars(0x00E9));
+        final String testString;
+
+        String encoding = System.getProperty("native.encoding");
+        switch (encoding) {
+        default:
+            testString = new String(Character.toChars(0x00E9));
+            break;
+
+        case "MS932":
+        case "SJIS":
+            testString = new String(Character.toChars(0x3042));
+            break;
+        }
 
         TKit.trace(String.format("Test string code points: %s", testString
                 .codePoints()

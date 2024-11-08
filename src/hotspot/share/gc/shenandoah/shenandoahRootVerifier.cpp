@@ -36,38 +36,32 @@
 #include "gc/shenandoah/shenandoahUtils.hpp"
 #include "gc/shared/oopStorage.inline.hpp"
 #include "gc/shared/oopStorageSet.hpp"
+#include "runtime/javaThread.hpp"
 #include "runtime/jniHandles.hpp"
-#include "runtime/thread.hpp"
+#include "runtime/threads.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/enumIterator.hpp"
 
 ShenandoahGCStateResetter::ShenandoahGCStateResetter() :
   _heap(ShenandoahHeap::heap()),
-  _gc_state(_heap->gc_state()),
-  _concurrent_weak_root_in_progress(ShenandoahHeap::heap()->is_concurrent_weak_root_in_progress()) {
+  _gc_state(_heap->gc_state()) {
   _heap->_gc_state.clear();
-  _heap->set_concurrent_weak_root_in_progress(false);
 }
 
 ShenandoahGCStateResetter::~ShenandoahGCStateResetter() {
   _heap->_gc_state.set(_gc_state);
   assert(_heap->gc_state() == _gc_state, "Should be restored");
-  _heap->set_concurrent_weak_root_in_progress(_concurrent_weak_root_in_progress);
 }
 
 void ShenandoahRootVerifier::roots_do(OopClosure* oops) {
   ShenandoahGCStateResetter resetter;
   shenandoah_assert_safepoint();
 
-  CodeBlobToOopClosure blobs(oops, !CodeBlobToOopClosure::FixRelocations);
-  CodeCache::blobs_do(&blobs);
+  NMethodToOopClosure blobs(oops, !NMethodToOopClosure::FixRelocations);
+  CodeCache::nmethods_do(&blobs);
 
   CLDToOopClosure clds(oops, ClassLoaderData::_claim_none);
   ClassLoaderDataGraph::cld_do(&clds);
-
-  if (ShenandoahStringDedup::is_enabled()) {
-    ShenandoahStringDedup::oops_do_slow(oops);
-  }
 
   for (auto id : EnumRange<OopStorageSet::StrongId>()) {
     OopStorageSet::storage(id)->oops_do(oops);
@@ -76,7 +70,7 @@ void ShenandoahRootVerifier::roots_do(OopClosure* oops) {
   // Do thread roots the last. This allows verification code to find
   // any broken objects from those special roots first, not the accidental
   // dangling reference from the thread root.
-  Threads::possibly_parallel_oops_do(true, oops, NULL);
+  Threads::possibly_parallel_oops_do(true, oops, nullptr);
 }
 
 void ShenandoahRootVerifier::strong_roots_do(OopClosure* oops) {
@@ -86,16 +80,12 @@ void ShenandoahRootVerifier::strong_roots_do(OopClosure* oops) {
   CLDToOopClosure clds(oops, ClassLoaderData::_claim_none);
   ClassLoaderDataGraph::always_strong_cld_do(&clds);
 
-  if (ShenandoahStringDedup::is_enabled()) {
-    ShenandoahStringDedup::oops_do_slow(oops);
-  }
-
   for (auto id : EnumRange<OopStorageSet::StrongId>()) {
     OopStorageSet::storage(id)->oops_do(oops);
   }
   // Do thread roots the last. This allows verification code to find
   // any broken objects from those special roots first, not the accidental
   // dangling reference from the thread root.
-  CodeBlobToOopClosure blobs(oops, !CodeBlobToOopClosure::FixRelocations);
-  Threads::possibly_parallel_oops_do(true, oops, &blobs);
+  NMethodToOopClosure nmethods(oops, !NMethodToOopClosure::FixRelocations);
+  Threads::possibly_parallel_oops_do(true, oops, &nmethods);
 }

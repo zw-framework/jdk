@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2008, 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,7 +27,6 @@ package sun.invoke.util;
 
 import java.lang.reflect.Modifier;
 import static java.lang.reflect.Modifier.*;
-import java.util.Objects;
 import jdk.internal.reflect.Reflection;
 
 /**
@@ -202,9 +201,10 @@ public class VerifyAccess {
             Module lookupModule = lookupClass.getModule();
             Module refModule = refc.getModule();
 
-            // early VM startup case, java.base not defined
-            if (lookupModule == null) {
-                assert refModule == null;
+            // early VM startup case, java.base not defined or
+            // module system is not fully initialized and exports are not set up
+            if (lookupModule == null || !jdk.internal.misc.VM.isModuleSystemInited()) {
+                assert lookupModule == refModule;
                 return true;
             }
 
@@ -229,11 +229,6 @@ public class VerifyAccess {
                                                               : null;
             assert refModule != lookupModule || refModule != prevLookupModule;
             if (isModuleAccessible(refc, lookupModule, prevLookupModule))
-                return true;
-
-            // not exported but allow access during VM initialization
-            // because java.base does not have its exports setup
-            if (!jdk.internal.misc.VM.isModuleSystemInited())
                 return true;
 
             // public class not accessible to lookupClass
@@ -273,7 +268,7 @@ public class VerifyAccess {
      * @param type the supposed type of a member or symbolic reference of refc
      * @param refc the class attempting to make the reference
      */
-    public static boolean isTypeVisible(Class<?> type, Class<?> refc) {
+    public static boolean ensureTypeVisible(Class<?> type, Class<?> refc) {
         if (type == refc) {
             return true;  // easy check
         }
@@ -289,12 +284,14 @@ public class VerifyAccess {
         if (refcLoader == null && typeLoader != null) {
             return false;
         }
-        if (typeLoader == null && type.getName().startsWith("java.")) {
-            // Note:  The API for actually loading classes, ClassLoader.defineClass,
-            // guarantees that classes with names beginning "java." cannot be aliased,
-            // because class loaders cannot load them directly.
-            return true;
-        }
+
+        // The API for actually loading classes, ClassLoader.defineClass,
+        // guarantees that classes with names beginning "java." cannot be aliased,
+        // because class loaders cannot load them directly. However, it is beneficial
+        // for JIT-compilers to ensure all signature classes are loaded.
+        // JVM doesn't install any loader contraints when performing MemberName resolution,
+        // so eagerly resolving signature classes is a way to match what JVM achieves
+        // with loader constraints during method resolution for invoke bytecodes.
 
         // Do it the hard way:  Look up the type name from the refc loader.
         //
@@ -323,6 +320,7 @@ public class VerifyAccess {
         // memoization.  And the caller never gets to look at the alternate type binding
         // ("res"), whether it exists or not.
         final String name = type.getName();
+        @SuppressWarnings("removal")
         Class<?> res = java.security.AccessController.doPrivileged(
                 new java.security.PrivilegedAction<>() {
                     public Class<?> run() {
@@ -342,12 +340,12 @@ public class VerifyAccess {
      * @param type the supposed type of a member or symbolic reference of refc
      * @param refc the class attempting to make the reference
      */
-    public static boolean isTypeVisible(java.lang.invoke.MethodType type, Class<?> refc) {
-        if (!isTypeVisible(type.returnType(), refc)) {
+    public static boolean ensureTypeVisible(java.lang.invoke.MethodType type, Class<?> refc) {
+        if (!ensureTypeVisible(type.returnType(), refc)) {
             return false;
         }
         for (int n = 0, max = type.parameterCount(); n < max; n++) {
-            if (!isTypeVisible(type.parameterType(n), refc)) {
+            if (!ensureTypeVisible(type.parameterType(n), refc)) {
                 return false;
             }
         }
@@ -375,7 +373,7 @@ public class VerifyAccess {
             return true;
         if (class1.getClassLoader() != class2.getClassLoader())
             return false;
-        return Objects.equals(class1.getPackageName(), class2.getPackageName());
+        return class1.getPackageName() == class2.getPackageName();
     }
 
     /**

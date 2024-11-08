@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -42,16 +42,6 @@
 InterpreterRuntime::SignatureHandlerGenerator::SignatureHandlerGenerator(const methodHandle& method, CodeBuffer* buffer) :
     NativeSignatureIterator(method) {
   _masm = new MacroAssembler(buffer);
-#ifdef AMD64
-#ifdef _WIN64
-  _num_args = (method->is_static() ? 1 : 0);
-  _stack_offset = (Argument::n_int_register_parameters_c+1)* wordSize; // don't overwrite return address
-#else
-  _num_int_args = (method->is_static() ? 1 : 0);
-  _num_fp_args = 0;
-  _stack_offset = wordSize; // don't overwrite return address
-#endif // _WIN64
-#endif // AMD64
 }
 
 void InterpreterRuntime::SignatureHandlerGenerator::pass_int() {
@@ -79,7 +69,7 @@ void InterpreterRuntime::SignatureHandlerGenerator::move(int from_offset, int to
 
 void InterpreterRuntime::SignatureHandlerGenerator::box(int from_offset, int to_offset) {
   __ lea(temp(), Address(from(), Interpreter::local_offset_in_bytes(from_offset)));
-  __ cmpptr(Address(from(), Interpreter::local_offset_in_bytes(from_offset)), (int32_t)NULL_WORD); // do not use temp() to avoid AGI
+  __ cmpptr(Address(from(), Interpreter::local_offset_in_bytes(from_offset)), NULL_WORD); // do not use temp() to avoid AGI
   Label L;
   __ jcc(Assembler::notZero, L);
   __ movptr(temp(), NULL_WORD);
@@ -146,8 +136,8 @@ class SlowSignatureHandler: public NativeSignatureIterator {
   }
 };
 
-JRT_ENTRY(address, InterpreterRuntime::slow_signature_handler(JavaThread* thread, Method* method, intptr_t* from, intptr_t* to))
-  methodHandle m(thread, (Method*)method);
+JRT_ENTRY(address, InterpreterRuntime::slow_signature_handler(JavaThread* current, Method* method, intptr_t* from, intptr_t* to))
+  methodHandle m(current, (Method*)method);
   assert(m->is_native(), "sanity check");
   // handle arguments
   SlowSignatureHandler(m, (address)from, to + 1).iterate((uint64_t)CONST64(-1));

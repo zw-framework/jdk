@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,6 +23,7 @@
  * questions.
  */
 
+#include "jvm.h"
 #include "util.h"
 #include "utf_util.h"
 #include "transport.h"
@@ -121,7 +122,11 @@ static void *
 loadTransportLibrary(const char *libdir, const char *name)
 {
     char buf[MAXPATHLEN*2+100];
-#ifndef STATIC_BUILD
+
+    if (JVM_IsStaticallyLinked()) {
+        return (dbgsysLoadLibrary(NULL, buf, sizeof(buf)));
+    }
+
     void *handle;
     char libname[MAXPATHLEN+2];
     const char *plibdir;
@@ -145,9 +150,6 @@ loadTransportLibrary(const char *libdir, const char *name)
     /* dlopen (unix) / LoadLibrary (windows) the transport library */
     handle = dbgsysLoadLibrary(libname, buf, sizeof(buf));
     return handle;
-#else
-    return (dbgsysLoadLibrary(NULL, buf, sizeof(buf)));
-#endif
 }
 
 /*
@@ -508,7 +510,7 @@ transport_startTransport(jboolean isServer, char *name, char *address,
     trans = info->transport;
 
     if (isServer) {
-        char *retAddress;
+        char *retAddress = NULL;
         char *launchCommand;
         jvmtiError error;
         int len;
@@ -607,9 +609,13 @@ transport_startTransport(jboolean isServer, char *name, char *address,
                     name, retAddress));
             }
         }
+        jvmtiDeallocate(retAddress);
         return JDWP_ERROR(NONE);
 
 handleError:
+        if (retAddress != NULL) {
+            jvmtiDeallocate(retAddress);
+        }
         freeTransportInfo(info);
     } else {
         /*

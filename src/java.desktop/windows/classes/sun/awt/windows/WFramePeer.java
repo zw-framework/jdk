@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1996, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1996, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -65,11 +65,22 @@ class WFramePeer extends WWindowPeer implements FramePeer {
         return AWTAccessor.getFrameAccessor().getExtendedState((Frame)target);
     }
 
+    @Override
+    public void toFront() {
+        int state = getState();
+        if ((state & Frame.ICONIFIED) != 0) {
+            setState(state & ~Frame.ICONIFIED);
+        }
+
+        super.toFront();
+    }
+
     // Convenience methods to save us from trouble of extracting
     // Rectangle fields in native code.
     private native void setMaximizedBounds(int x, int y, int w, int h);
     private native void clearMaximizedBounds();
 
+    @SuppressWarnings("removal")
     private static final boolean keepOnMinimize = "true".equals(
         AccessController.doPrivileged(
             new GetPropertyAction(

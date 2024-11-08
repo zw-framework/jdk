@@ -23,7 +23,7 @@
  */
 
 /*
- * @test TestAllocObjectArrays
+ * @test id=passive
  * @summary Acceptance tests: collector can withstand allocation
  * @key randomness
  * @requires vm.gc.Shenandoah
@@ -51,7 +51,7 @@
  */
 
 /*
- * @test TestAllocObjectArrays
+ * @test id=aggressive
  * @summary Acceptance tests: collector can withstand allocation
  * @key randomness
  * @requires vm.gc.Shenandoah
@@ -83,7 +83,7 @@
  */
 
 /*
- * @test TestAllocObjectArrays
+ * @test id=adaptive
  * @summary Acceptance tests: collector can withstand allocation
  * @key randomness
  * @requires vm.gc.Shenandoah
@@ -100,7 +100,7 @@
  */
 
 /*
- * @test TestAllocObjectArrays
+ * @test id=static
  * @summary Acceptance tests: collector can withstand allocation
  * @key randomness
  * @requires vm.gc.Shenandoah
@@ -112,7 +112,7 @@
  */
 
 /*
- * @test TestAllocObjectArrays
+ * @test id=compact
  * @summary Acceptance tests: collector can withstand allocation
  * @key randomness
  * @requires vm.gc.Shenandoah
@@ -124,7 +124,7 @@
  */
 
 /*
- * @test TestAllocObjectArrays
+ * @test id=no-tlab
  * @summary Acceptance tests: collector can withstand allocation
  * @key randomness
  * @requires vm.gc.Shenandoah
@@ -135,56 +135,6 @@
  *      -XX:-UseTLAB -XX:+ShenandoahVerify
  *      TestAllocObjectArrays
  */
-
-/*
- * @test TestAllocObjectArrays
- * @summary Acceptance tests: collector can withstand allocation
- * @key randomness
- * @requires vm.gc.Shenandoah
- * @library /test/lib
- *
- * @run main/othervm -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -Xmx1g -Xms1g
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      -XX:+ShenandoahOOMDuringEvacALot -XX:+ShenandoahVerify
- *      TestAllocObjectArrays
- *
- * @run main/othervm -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -Xmx1g -Xms1g
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      -XX:+ShenandoahAllocFailureALot -XX:+ShenandoahVerify
- *      TestAllocObjectArrays
- *
- * @run main/othervm -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -Xmx1g -Xms1g
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      -XX:+ShenandoahOOMDuringEvacALot
- *      TestAllocObjectArrays
- *
- * @run main/othervm -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -Xmx1g -Xms1g
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      -XX:+ShenandoahAllocFailureALot
- *      TestAllocObjectArrays
- *
- * @run main/othervm -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -Xmx1g -Xms1g
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      TestAllocObjectArrays
- */
-
-/*
- * @test TestAllocObjectArrays
- * @summary Acceptance tests: collector can withstand allocation
- * @key randomness
- * @requires vm.gc.Shenandoah
- * @library /test/lib
- *
- * @run main/othervm -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -Xmx1g -Xms1g
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu
- *      -XX:+ShenandoahVerify
- *      TestAllocObjectArrays
- *
- * @run main/othervm -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -Xmx1g -Xms1g
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu
- *      TestAllocObjectArrays
- */
-
 import java.util.Random;
 import jdk.test.lib.Utils;
 

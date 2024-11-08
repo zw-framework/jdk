@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, 2023, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2020 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -41,10 +41,11 @@ size_t RunningCounters::reserved_words() {
 
 size_t RunningCounters::reserved_words_class() {
   VirtualSpaceList* vs = VirtualSpaceList::vslist_class();
-  return vs != NULL ? vs->reserved_words() : 0;
+  return vs != nullptr ? vs->reserved_words() : 0;
 }
 
 size_t RunningCounters::reserved_words_nonclass() {
+  assert(VirtualSpaceList::vslist_nonclass() != nullptr, "Metaspace not yet initialized");
   return VirtualSpaceList::vslist_nonclass()->reserved_words();
 }
 
@@ -55,10 +56,11 @@ size_t RunningCounters::committed_words() {
 
 size_t RunningCounters::committed_words_class() {
   VirtualSpaceList* vs = VirtualSpaceList::vslist_class();
-  return vs != NULL ? vs->committed_words() : 0;
+  return vs != nullptr ? vs->committed_words() : 0;
 }
 
 size_t RunningCounters::committed_words_nonclass() {
+  assert(VirtualSpaceList::vslist_nonclass() != nullptr, "Metaspace not yet initialized");
   return VirtualSpaceList::vslist_nonclass()->committed_words();
 }
 
@@ -86,10 +88,11 @@ size_t RunningCounters::free_chunks_words() {
 
 size_t RunningCounters::free_chunks_words_class() {
   ChunkManager* cm = ChunkManager::chunkmanager_class();
-  return cm != NULL ? cm->total_word_size() : 0;
+  return cm != nullptr ? cm->total_word_size() : 0;
 }
 
 size_t RunningCounters::free_chunks_words_nonclass() {
+  assert(ChunkManager::chunkmanager_nonclass() != nullptr, "Metaspace not yet initialized");
   return ChunkManager::chunkmanager_nonclass()->total_word_size();
 }
 

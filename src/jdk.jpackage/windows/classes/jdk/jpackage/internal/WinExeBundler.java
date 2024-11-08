@@ -31,6 +31,7 @@ import java.nio.file.Path;
 import java.text.MessageFormat;
 import java.util.Map;
 
+@SuppressWarnings("restricted")
 public class WinExeBundler extends AbstractBundler {
 
     static {
@@ -54,7 +55,7 @@ public class WinExeBundler extends AbstractBundler {
                     },
                     (s, p) -> null);
 
-    private final static String EXE_WRAPPER_NAME = "msiwrapper.exe";
+    private static final String EXE_WRAPPER_NAME = "msiwrapper.exe";
 
     @Override
     public String getName() {

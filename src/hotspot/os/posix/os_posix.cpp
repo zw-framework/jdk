@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,41 +22,60 @@
  *
  */
 
-
-#include "jvm.h"
-#ifdef LINUX
 #include "classfile/classLoader.hpp"
-#endif
+#include "jvm.h"
 #include "jvmtifiles/jvmti.h"
 #include "logging/log.hpp"
 #include "memory/allocation.inline.hpp"
+#include "nmt/memTracker.hpp"
 #include "os_posix.inline.hpp"
-#include "runtime/globals_extension.hpp"
-#include "runtime/osThread.hpp"
-#include "utilities/globalDefinitions.hpp"
-#include "runtime/frame.inline.hpp"
-#include "runtime/interfaceSupport.inline.hpp"
-#include "runtime/sharedRuntime.hpp"
-#include "services/attachListener.hpp"
-#include "services/memTracker.hpp"
+#include "runtime/arguments.hpp"
 #include "runtime/atomic.hpp"
+#include "runtime/frame.inline.hpp"
+#include "runtime/globals_extension.hpp"
+#include "runtime/interfaceSupport.inline.hpp"
 #include "runtime/java.hpp"
 #include "runtime/orderAccess.hpp"
+#include "runtime/osThread.hpp"
+#include "runtime/park.hpp"
 #include "runtime/perfMemory.hpp"
+#include "runtime/sharedRuntime.hpp"
+#include "services/attachListener.hpp"
 #include "utilities/align.hpp"
+#include "utilities/checkedCast.hpp"
+#include "utilities/debug.hpp"
+#include "utilities/defaultStream.hpp"
 #include "utilities/events.hpp"
 #include "utilities/formatBuffer.hpp"
+#include "utilities/globalDefinitions.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/vmError.hpp"
+#if INCLUDE_JFR
+#include "jfr/support/jfrNativeLibraryLoadEvent.hpp"
+#endif
+
+#ifdef AIX
+#include "loadlib_aix.hpp"
+#include "os_aix.hpp"
+#endif
+#ifdef LINUX
+#include "os_linux.hpp"
+#endif
 
 #include <dirent.h>
 #include <dlfcn.h>
 #include <grp.h>
+#include <locale.h>
+#include <netdb.h>
 #include <pwd.h>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
+#include <spawn.h>
+#include <sys/time.h>
+#include <sys/times.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
@@ -74,60 +93,143 @@
   #define MAP_ANONYMOUS MAP_ANON
 #endif
 
-#define check_with_errno(check_type, cond, msg)                             \
-  do {                                                                      \
-    int err = errno;                                                        \
-    check_type(cond, "%s; error='%s' (errno=%s)", msg, os::strerror(err),   \
-               os::errno_name(err));                                        \
-} while (false)
+/* Input/Output types for mincore(2) */
+typedef LINUX_ONLY(unsigned) char mincore_vec_t;
 
-#define assert_with_errno(cond, msg)    check_with_errno(assert, cond, msg)
-#define guarantee_with_errno(cond, msg) check_with_errno(guarantee, cond, msg)
+static jlong initial_time_count = 0;
+
+static int clock_tics_per_sec = 100;
+
+// Platform minimum stack allowed
+size_t os::_os_min_stack_allowed = PTHREAD_STACK_MIN;
 
 // Check core dump limit and report possible place where core can be found
-void os::check_dump_limit(char* buffer, size_t bufferSize) {
+void os::check_core_dump_prerequisites(char* buffer, size_t bufferSize, bool check_only) {
   if (!FLAG_IS_DEFAULT(CreateCoredumpOnCrash) && !CreateCoredumpOnCrash) {
     jio_snprintf(buffer, bufferSize, "CreateCoredumpOnCrash is disabled from command line");
     VMError::record_coredump_status(buffer, false);
-    return;
-  }
-
-  int n;
-  struct rlimit rlim;
-  bool success;
-
-  char core_path[PATH_MAX];
-  n = get_core_path(core_path, PATH_MAX);
-
-  if (n <= 0) {
-    jio_snprintf(buffer, bufferSize, "core.%d (may not exist)", current_process_id());
-    success = true;
-#ifdef LINUX
-  } else if (core_path[0] == '"') { // redirect to user process
-    jio_snprintf(buffer, bufferSize, "Core dumps may be processed with %s", core_path);
-    success = true;
-#endif
-  } else if (getrlimit(RLIMIT_CORE, &rlim) != 0) {
-    jio_snprintf(buffer, bufferSize, "%s (may not exist)", core_path);
-    success = true;
   } else {
-    switch(rlim.rlim_cur) {
-      case RLIM_INFINITY:
-        jio_snprintf(buffer, bufferSize, "%s", core_path);
-        success = true;
-        break;
-      case 0:
-        jio_snprintf(buffer, bufferSize, "Core dumps have been disabled. To enable core dumping, try \"ulimit -c unlimited\" before starting Java again");
-        success = false;
-        break;
-      default:
-        jio_snprintf(buffer, bufferSize, "%s (max size " UINT64_FORMAT " kB). To ensure a full core dump, try \"ulimit -c unlimited\" before starting Java again", core_path, uint64_t(rlim.rlim_cur) / 1024);
-        success = true;
-        break;
+    struct rlimit rlim;
+    bool success = true;
+    bool warn = true;
+    char core_path[PATH_MAX];
+    if (get_core_path(core_path, PATH_MAX) <= 0) {
+      jio_snprintf(buffer, bufferSize, "core.%d (may not exist)", current_process_id());
+#ifdef LINUX
+    } else if (core_path[0] == '"') { // redirect to user process
+      jio_snprintf(buffer, bufferSize, "Core dumps may be processed with %s", core_path);
+#endif
+    } else if (getrlimit(RLIMIT_CORE, &rlim) != 0) {
+      jio_snprintf(buffer, bufferSize, "%s (may not exist)", core_path);
+    } else {
+      switch(rlim.rlim_cur) {
+        case RLIM_INFINITY:
+          jio_snprintf(buffer, bufferSize, "%s", core_path);
+          warn = false;
+          break;
+        case 0:
+          jio_snprintf(buffer, bufferSize, "Core dumps have been disabled. To enable core dumping, try \"ulimit -c unlimited\" before starting Java again");
+          success = false;
+          break;
+        default:
+          jio_snprintf(buffer, bufferSize, "%s (max size " UINT64_FORMAT " k). To ensure a full core dump, try \"ulimit -c unlimited\" before starting Java again", core_path, uint64_t(rlim.rlim_cur) / K);
+          break;
+      }
+    }
+    if (!check_only) {
+      VMError::record_coredump_status(buffer, success);
+    } else if (warn) {
+      warning("CreateCoredumpOnCrash specified, but %s", buffer);
     }
   }
+}
 
-  VMError::record_coredump_status(buffer, success);
+bool os::committed_in_range(address start, size_t size, address& committed_start, size_t& committed_size) {
+
+#ifdef _AIX
+  committed_start = start;
+  committed_size = size;
+  return true;
+#else
+
+  int mincore_return_value;
+  constexpr size_t stripe = 1024;  // query this many pages each time
+  mincore_vec_t vec [stripe + 1];
+
+  // set a guard
+  DEBUG_ONLY(vec[stripe] = 'X');
+
+  size_t page_sz = os::vm_page_size();
+  uintx pages = size / page_sz;
+
+  assert(is_aligned(start, page_sz), "Start address must be page aligned");
+  assert(is_aligned(size, page_sz), "Size must be page aligned");
+
+  committed_start = nullptr;
+
+  int loops = checked_cast<int>((pages + stripe - 1) / stripe);
+  int committed_pages = 0;
+  address loop_base = start;
+  bool found_range = false;
+
+  for (int index = 0; index < loops && !found_range; index ++) {
+    assert(pages > 0, "Nothing to do");
+    uintx pages_to_query = (pages >= stripe) ? stripe : pages;
+    pages -= pages_to_query;
+
+    // Get stable read
+    int fail_count = 0;
+    while ((mincore_return_value = mincore(loop_base, pages_to_query * page_sz, vec)) == -1 && errno == EAGAIN){
+      if (++fail_count == 1000){
+        return false;
+      }
+    }
+
+    // During shutdown, some memory goes away without properly notifying NMT,
+    // E.g. ConcurrentGCThread/WatcherThread can exit without deleting thread object.
+    // Bailout and return as not committed for now.
+    if (mincore_return_value == -1 && errno == ENOMEM) {
+      return false;
+    }
+
+    // If mincore is not supported.
+    if (mincore_return_value == -1 && errno == ENOSYS) {
+      return false;
+    }
+
+    assert(vec[stripe] == 'X', "overflow guard");
+    assert(mincore_return_value == 0, "Range must be valid");
+    // Process this stripe
+    for (uintx vecIdx = 0; vecIdx < pages_to_query; vecIdx ++) {
+      if ((vec[vecIdx] & 0x01) == 0) { // not committed
+        // End of current contiguous region
+        if (committed_start != nullptr) {
+          found_range = true;
+          break;
+        }
+      } else { // committed
+        // Start of region
+        if (committed_start == nullptr) {
+          committed_start = loop_base + page_sz * vecIdx;
+        }
+        committed_pages ++;
+      }
+    }
+
+    loop_base += pages_to_query * page_sz;
+  }
+
+  if (committed_start != nullptr) {
+    assert(committed_pages > 0, "Must have committed region");
+    assert(committed_pages <= int(size / page_sz), "Can not commit more than it has");
+    assert(committed_start >= start && committed_start < start + size, "Out of range");
+    committed_size = page_sz * committed_pages;
+    return true;
+  } else {
+    assert(committed_pages == 0, "Should not have committed region");
+    return false;
+  }
+#endif
 }
 
 int os::get_native_stack(address* stack, int frames, int toSkip) {
@@ -140,27 +242,18 @@ int os::get_native_stack(address* stack, int frames, int toSkip) {
     } else {
       stack[frame_idx ++] = fr.pc();
     }
-    if (fr.fp() == NULL || fr.cb() != NULL ||
-        fr.sender_pc() == NULL || os::is_first_C_frame(&fr)) break;
-
-    if (fr.sender_pc() && !os::is_first_C_frame(&fr)) {
-      fr = os::get_sender_for_C_frame(&fr);
-    } else {
+    if (fr.fp() == nullptr || fr.cb() != nullptr ||
+        fr.sender_pc() == nullptr || os::is_first_C_frame(&fr)) {
       break;
     }
+    fr = os::get_sender_for_C_frame(&fr);
   }
   num_of_frames = frame_idx;
   for (; frame_idx < frames; frame_idx ++) {
-    stack[frame_idx] = NULL;
+    stack[frame_idx] = nullptr;
   }
 
   return num_of_frames;
-}
-
-
-bool os::unsetenv(const char* name) {
-  assert(name != NULL, "Null pointer");
-  return (::unsetenv(name) == 0);
 }
 
 int os::get_last_error() {
@@ -180,6 +273,23 @@ size_t os::lasterror(char *buf, size_t len) {
   return n;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// breakpoint support
+
+void os::breakpoint() {
+  BREAKPOINT;
+}
+
+extern "C" void breakpoint() {
+  // use debugger to set breakpoint here
+}
+
+// Return true if user is running as root.
+bool os::have_special_privileges() {
+  static bool privileges = (getuid() != geteuid()) || (getgid() != getegid());
+  return privileges;
+}
+
 void os::wait_for_keypress_at_exit(void) {
   // don't do anything on posix platforms
   return;
@@ -190,7 +300,7 @@ int os::create_file_for_heap(const char* dir) {
 
 #if defined(LINUX) && defined(O_TMPFILE)
   char* native_dir = os::strdup(dir);
-  if (native_dir == NULL) {
+  if (native_dir == nullptr) {
     vm_exit_during_initialization(err_msg("strdup failed during creation of backing file for heap (%s)", os::strerror(errno)));
     return -1;
   }
@@ -205,7 +315,7 @@ int os::create_file_for_heap(const char* dir) {
 
     size_t fullname_len = strlen(dir) + strlen(name_template);
     char *fullname = (char*)os::malloc(fullname_len + 1, mtInternal);
-    if (fullname == NULL) {
+    if (fullname == nullptr) {
       vm_exit_during_initialization(err_msg("Malloc failed during creation of backing file for heap (%s)", os::strerror(errno)));
       return -1;
     }
@@ -233,10 +343,39 @@ int os::create_file_for_heap(const char* dir) {
   return fd;
 }
 
-static char* reserve_mmapped_memory(size_t bytes, char* requested_addr) {
+// return current position of file pointer
+jlong os::current_file_offset(int fd) {
+  return (jlong)::lseek(fd, (off_t)0, SEEK_CUR);
+}
+
+// move file pointer to the specified offset
+jlong os::seek_to_file_offset(int fd, jlong offset) {
+  return (jlong)::lseek(fd, (off_t)offset, SEEK_SET);
+}
+
+// Is a (classpath) directory empty?
+bool os::dir_is_empty(const char* path) {
+  DIR *dir = nullptr;
+  struct dirent *ptr;
+
+  dir = ::opendir(path);
+  if (dir == nullptr) return true;
+
+  // Scan the directory
+  bool result = true;
+  while (result && (ptr = ::readdir(dir)) != nullptr) {
+    if (strcmp(ptr->d_name, ".") != 0 && strcmp(ptr->d_name, "..") != 0) {
+      result = false;
+    }
+  }
+  ::closedir(dir);
+  return result;
+}
+
+static char* reserve_mmapped_memory(size_t bytes, char* requested_addr, MemTag mem_tag) {
   char * addr;
   int flags = MAP_PRIVATE NOT_AIX( | MAP_NORESERVE ) | MAP_ANONYMOUS;
-  if (requested_addr != NULL) {
+  if (requested_addr != nullptr) {
     assert((uintptr_t)requested_addr % os::vm_page_size() == 0, "Requested address should be aligned to OS page size");
     flags |= MAP_FIXED;
   }
@@ -248,13 +387,14 @@ static char* reserve_mmapped_memory(size_t bytes, char* requested_addr) {
                        flags, -1, 0);
 
   if (addr != MAP_FAILED) {
-    MemTracker::record_virtual_memory_reserve((address)addr, bytes, CALLER_PC);
+    MemTracker::record_virtual_memory_reserve((address)addr, bytes, CALLER_PC, mem_tag);
     return addr;
   }
-  return NULL;
+  return nullptr;
 }
 
 static int util_posix_fallocate(int fd, off_t offset, off_t len) {
+  static_assert(sizeof(off_t) == 8, "Expected Large File Support in this file");
 #ifdef __APPLE__
   fstore_t store = { F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, len };
   // First we try to get a continuous chunk of disk space
@@ -281,40 +421,41 @@ char* os::map_memory_to_file(char* base, size_t size, int fd) {
   int ret = util_posix_fallocate(fd, 0, (off_t)size);
   if (ret != 0) {
     vm_exit_during_initialization(err_msg("Error in mapping Java heap at the given filesystem directory. error(%d)", ret));
-    return NULL;
+    return nullptr;
   }
 
   int prot = PROT_READ | PROT_WRITE;
   int flags = MAP_SHARED;
-  if (base != NULL) {
+  if (base != nullptr) {
     flags |= MAP_FIXED;
   }
   char* addr = (char*)mmap(base, size, prot, flags, fd, 0);
 
   if (addr == MAP_FAILED) {
     warning("Failed mmap to file. (%s)", os::strerror(errno));
-    return NULL;
+    return nullptr;
   }
-  if (base != NULL && addr != base) {
+  if (base != nullptr && addr != base) {
     if (!os::release_memory(addr, size)) {
       warning("Could not release memory on unsuccessful file mapping");
     }
-    return NULL;
+    return nullptr;
   }
   return addr;
 }
 
 char* os::replace_existing_mapping_with_file_mapping(char* base, size_t size, int fd) {
   assert(fd != -1, "File descriptor is not valid");
-  assert(base != NULL, "Base cannot be NULL");
+  assert(base != nullptr, "Base cannot be null");
 
   return map_memory_to_file(base, size, fd);
 }
 
 static size_t calculate_aligned_extra_size(size_t size, size_t alignment) {
-  assert((alignment & (os::vm_allocation_granularity() - 1)) == 0,
+  assert(is_aligned(alignment, os::vm_allocation_granularity()),
       "Alignment must be a multiple of allocation granularity (page size)");
-  assert((size & (alignment -1)) == 0, "size must be 'alignment' aligned");
+  assert(is_aligned(size, os::vm_allocation_granularity()),
+      "Size must be a multiple of allocation granularity (page size)");
 
   size_t extra_size = size + alignment;
   assert(extra_size >= size, "overflow, size is too large to allow alignment");
@@ -353,13 +494,13 @@ static char* chop_extra_memory(size_t size, size_t alignment, char* extra_base, 
 char* os::reserve_memory_aligned(size_t size, size_t alignment, bool exec) {
   size_t extra_size = calculate_aligned_extra_size(size, alignment);
   char* extra_base = os::reserve_memory(extra_size, exec);
-  if (extra_base == NULL) {
-    return NULL;
+  if (extra_base == nullptr) {
+    return nullptr;
   }
   return chop_extra_memory(size, alignment, extra_base, extra_size);
 }
 
-char* os::map_memory_to_file_aligned(size_t size, size_t alignment, int file_desc) {
+char* os::map_memory_to_file_aligned(size_t size, size_t alignment, int file_desc, MemTag mem_tag) {
   size_t extra_size = calculate_aligned_extra_size(size, alignment);
   // For file mapping, we do not call os:map_memory_to_file(size,fd) since:
   // - we later chop away parts of the mapping using os::release_memory and that could fail if the
@@ -367,28 +508,17 @@ char* os::map_memory_to_file_aligned(size_t size, size_t alignment, int file_des
   // - The memory API os::reserve_memory uses is an implementation detail. It may (and usually is)
   //   mmap but it also may System V shared memory which cannot be uncommitted as a whole, so
   //   chopping off and unmapping excess bits back and front (see below) would not work.
-  char* extra_base = reserve_mmapped_memory(extra_size, NULL);
-  if (extra_base == NULL) {
-    return NULL;
+  char* extra_base = reserve_mmapped_memory(extra_size, nullptr, mem_tag);
+  if (extra_base == nullptr) {
+    return nullptr;
   }
   char* aligned_base = chop_extra_memory(size, alignment, extra_base, extra_size);
   // After we have an aligned address, we can replace anonymous mapping with file mapping
-  if (replace_existing_mapping_with_file_mapping(aligned_base, size, file_desc) == NULL) {
+  if (replace_existing_mapping_with_file_mapping(aligned_base, size, file_desc) == nullptr) {
     vm_exit_during_initialization(err_msg("Error in mapping Java heap at the given filesystem directory"));
   }
   MemTracker::record_virtual_memory_commit((address)aligned_base, size, CALLER_PC);
   return aligned_base;
-}
-
-int os::vsnprintf(char* buf, size_t len, const char* fmt, va_list args) {
-  // All supported POSIX platforms provide C99 semantics.
-  int result = ::vsnprintf(buf, len, fmt, args);
-  // If an encoding error occurred (result < 0) then it's not clear
-  // whether the buffer is NUL terminated, so ensure it is.
-  if ((result < 0) && (len > 0)) {
-    buf[len - 1] = '\0';
-  }
-  return result;
 }
 
 int os::get_fileno(FILE* fp) {
@@ -416,7 +546,7 @@ void os::Posix::print_load_average(outputStream* st) {
 // for reboot at least on my test machines
 void os::Posix::print_uptime_info(outputStream* st) {
   int bootsec = -1;
-  int currsec = time(NULL);
+  time_t currsec = time(nullptr);
   struct utmpx* ent;
   setutxent();
   while ((ent = getutxent())) {
@@ -427,7 +557,7 @@ void os::Posix::print_uptime_info(outputStream* st) {
   }
 
   if (bootsec != -1) {
-    os::print_dhm(st, "OS uptime:", (long) (currsec-bootsec));
+    os::print_dhm(st, "OS uptime:", currsec-bootsec);
   }
 }
 
@@ -443,14 +573,14 @@ static void print_rlimit(outputStream* st, const char* msg,
     // soft limit
     if (rlim.rlim_cur == RLIM_INFINITY) { st->print("infinity"); }
     else {
-      if (output_k) { st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_cur) / 1024); }
+      if (output_k) { st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_cur) / K); }
       else { st->print(UINT64_FORMAT, uint64_t(rlim.rlim_cur)); }
     }
     // hard limit
     st->print("/");
     if (rlim.rlim_max == RLIM_INFINITY) { st->print("infinity"); }
     else {
-      if (output_k) { st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_max) / 1024); }
+      if (output_k) { st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_max) / K); }
       else { st->print(UINT64_FORMAT, uint64_t(rlim.rlim_max)); }
     }
   }
@@ -463,7 +593,7 @@ void os::Posix::print_rlimit_info(outputStream* st) {
 
 #if defined(AIX)
   st->print(", NPROC ");
-  st->print("%d", sysconf(_SC_CHILD_MAX));
+  st->print("%ld", sysconf(_SC_CHILD_MAX));
 
   print_rlimit(st, ", THREADS", RLIMIT_THREADS);
 #else
@@ -519,7 +649,7 @@ void os::Posix::print_umask(outputStream* st, mode_t umsk) {
   st->print((umsk & S_IXOTH) ? "x" : "-");
 }
 
-void os::Posix::print_user_info(outputStream* st) {
+void os::print_user_info(outputStream* st) {
   unsigned id = (unsigned) ::getuid();
   st->print("uid  : %u ", id);
   id = (unsigned) ::geteuid();
@@ -533,18 +663,78 @@ void os::Posix::print_user_info(outputStream* st) {
   mode_t umsk = ::umask(0);
   ::umask(umsk);
   st->print("umask: %04o (", (unsigned) umsk);
-  print_umask(st, umsk);
+  os::Posix::print_umask(st, umsk);
   st->print_cr(")");
   st->cr();
 }
 
+// Print all active locale categories, one line each
+void os::print_active_locale(outputStream* st) {
+  st->print_cr("Active Locale:");
+  // Posix is quiet about how exactly LC_ALL is implemented.
+  // Just print it out too, in case LC_ALL is held separately
+  // from the individual categories.
+  #define LOCALE_CAT_DO(f) \
+    f(LC_ALL) \
+    f(LC_COLLATE) \
+    f(LC_CTYPE) \
+    f(LC_MESSAGES) \
+    f(LC_MONETARY) \
+    f(LC_NUMERIC) \
+    f(LC_TIME)
+  #define XX(cat) { cat, #cat },
+  const struct { int c; const char* name; } categories[] = {
+      LOCALE_CAT_DO(XX)
+      { -1, nullptr }
+  };
+  #undef XX
+  #undef LOCALE_CAT_DO
+  for (int i = 0; categories[i].c != -1; i ++) {
+    const char* locale = setlocale(categories[i].c, nullptr);
+    st->print_cr("%s=%s", categories[i].name,
+                 ((locale != nullptr) ? locale : "<unknown>"));
+  }
+}
+
+void os::print_jni_name_prefix_on(outputStream* st, int args_size) {
+  // no prefix required
+}
+
+void os::print_jni_name_suffix_on(outputStream* st, int args_size) {
+  // no suffix required
+}
 
 bool os::get_host_name(char* buf, size_t buflen) {
   struct utsname name;
-  uname(&name);
-  jio_snprintf(buf, buflen, "%s", name.nodename);
-  return true;
+  int retcode = uname(&name);
+  if (retcode != -1) {
+    jio_snprintf(buf, buflen, "%s", name.nodename);
+    return true;
+  }
+  const char* errmsg = os::strerror(errno);
+  log_warning(os)("Failed to get host name, error message: %s", errmsg);
+  return false;
 }
+
+#ifndef _LP64
+// Helper, on 32bit, for os::has_allocatable_memory_limit
+static bool is_allocatable(size_t s) {
+  if (s < 2 * G) {
+    return true;
+  }
+  // Use raw anonymous mmap here; no need to go through any
+  // of our reservation layers. We will unmap right away.
+  void* p = ::mmap(nullptr, s, PROT_NONE,
+                   MAP_PRIVATE | MAP_NORESERVE | MAP_ANONYMOUS, -1, 0);
+  if (p == MAP_FAILED) {
+    return false;
+  } else {
+    ::munmap(p, s);
+    return true;
+  }
+}
+#endif // !_LP64
+
 
 bool os::has_allocatable_memory_limit(size_t* limit) {
   struct rlimit rlim;
@@ -610,12 +800,88 @@ bool os::has_allocatable_memory_limit(size_t* limit) {
 #endif
 }
 
+void* os::get_default_process_handle() {
+#ifdef __APPLE__
+  // MacOS X needs to use RTLD_FIRST instead of RTLD_LAZY
+  // to avoid finding unexpected symbols on second (or later)
+  // loads of a library.
+  return (void*)::dlopen(nullptr, RTLD_FIRST);
+#else
+  return (void*)::dlopen(nullptr, RTLD_LAZY);
+#endif
+}
+
+void* os::dll_lookup(void* handle, const char* name) {
+  ::dlerror(); // Clear any previous error
+  void* ret = ::dlsym(handle, name);
+  if (ret == nullptr) {
+    const char* tmp = ::dlerror();
+    // It is possible that we found a null symbol, hence no error.
+    if (tmp != nullptr) {
+      log_debug(os)("Symbol %s not found in dll: %s", name, tmp);
+    }
+  }
+  return ret;
+}
+
+void os::dll_unload(void *lib) {
+  // os::Linux::dll_path returns a pointer to a string that is owned by the dynamic loader. Upon
+  // calling dlclose the dynamic loader may free the memory containing the string, thus we need to
+  // copy the string to be able to reference it after dlclose.
+  const char* l_path = nullptr;
+
+#ifdef LINUX
+  char* l_pathdup = nullptr;
+  l_path = os::Linux::dll_path(lib);
+  if (l_path != nullptr) {
+    l_path = l_pathdup = os::strdup(l_path);
+  }
+#endif  // LINUX
+
+  JFR_ONLY(NativeLibraryUnloadEvent unload_event(l_path);)
+
+  if (l_path == nullptr) {
+    l_path = "<not available>";
+  }
+
+  char ebuf[1024];
+  bool res = os::pd_dll_unload(lib, ebuf, sizeof(ebuf));
+
+  if (res) {
+    Events::log_dll_message(nullptr, "Unloaded shared library \"%s\" [" INTPTR_FORMAT "]",
+                            l_path, p2i(lib));
+    log_info(os)("Unloaded shared library \"%s\" [" INTPTR_FORMAT "]", l_path, p2i(lib));
+    JFR_ONLY(unload_event.set_result(true);)
+  } else {
+    Events::log_dll_message(nullptr, "Attempt to unload shared library \"%s\" [" INTPTR_FORMAT "] failed, %s",
+                            l_path, p2i(lib), ebuf);
+    log_info(os)("Attempt to unload shared library \"%s\" [" INTPTR_FORMAT "] failed, %s",
+                  l_path, p2i(lib), ebuf);
+    JFR_ONLY(unload_event.set_error_msg(ebuf);)
+  }
+  LINUX_ONLY(os::free(l_pathdup));
+}
+
+jlong os::lseek(int fd, jlong offset, int whence) {
+  return (jlong) ::lseek(fd, offset, whence);
+}
+
+int os::ftruncate(int fd, jlong length) {
+   return ::ftruncate(fd, length);
+}
+
 const char* os::get_current_directory(char *buf, size_t buflen) {
   return getcwd(buf, buflen);
 }
 
-FILE* os::open(int fd, const char* mode) {
+FILE* os::fdopen(int fd, const char* mode) {
   return ::fdopen(fd, mode);
+}
+
+ssize_t os::pd_write(int fd, const void *buf, size_t nBytes) {
+  ssize_t res;
+  RESTARTABLE(::write(fd, buf, nBytes), res);
+  return res;
 }
 
 ssize_t os::read_at(int fd, void *buf, unsigned int nBytes, jlong offset) {
@@ -631,25 +897,61 @@ void os::funlockfile(FILE* fp) {
 }
 
 DIR* os::opendir(const char* dirname) {
-  assert(dirname != NULL, "just checking");
+  assert(dirname != nullptr, "just checking");
   return ::opendir(dirname);
 }
 
 struct dirent* os::readdir(DIR* dirp) {
-  assert(dirp != NULL, "just checking");
+  assert(dirp != nullptr, "just checking");
   return ::readdir(dirp);
 }
 
 int os::closedir(DIR *dirp) {
-  assert(dirp != NULL, "just checking");
+  assert(dirp != nullptr, "just checking");
   return ::closedir(dirp);
+}
+
+int os::socket_close(int fd) {
+  return ::close(fd);
+}
+
+ssize_t os::recv(int fd, char* buf, size_t nBytes, uint flags) {
+  RESTARTABLE_RETURN_SSIZE_T(::recv(fd, buf, nBytes, flags));
+}
+
+ssize_t os::send(int fd, char* buf, size_t nBytes, uint flags) {
+  RESTARTABLE_RETURN_SSIZE_T(::send(fd, buf, nBytes, flags));
+}
+
+ssize_t os::raw_send(int fd, char* buf, size_t nBytes, uint flags) {
+  return os::send(fd, buf, nBytes, flags);
+}
+
+ssize_t os::connect(int fd, struct sockaddr* him, socklen_t len) {
+  RESTARTABLE_RETURN_SSIZE_T(::connect(fd, him, len));
+}
+
+void os::exit(int num) {
+  ALLOW_C_FUNCTION(::exit, ::exit(num);)
+}
+
+void os::_exit(int num) {
+  ALLOW_C_FUNCTION(::_exit, ::_exit(num);)
+}
+
+bool os::dont_yield() {
+  return DontYieldALot;
+}
+
+void os::naked_yield() {
+  sched_yield();
 }
 
 // Builds a platform dependent Agent_OnLoad_<lib_name> function name
 // which is used to find statically linked in agents.
 // Parameters:
 //            sym_name: Symbol in library we are looking for
-//            lib_name: Name of library to look in, NULL for shared libs.
+//            lib_name: Name of library to look in, null for shared libs.
 //            is_absolute_path == true if lib_name is absolute path to agent
 //                                     such as "/a/b/libL.so"
 //            == false if only the base name of the library is passed in
@@ -663,40 +965,46 @@ char* os::build_agent_function_name(const char *sym_name, const char *lib_name,
   size_t suffix_len = strlen(JNI_LIB_SUFFIX);
   const char *start;
 
-  if (lib_name != NULL) {
+  if (lib_name != nullptr) {
     name_len = strlen(lib_name);
     if (is_absolute_path) {
       // Need to strip path, prefix and suffix
-      if ((start = strrchr(lib_name, *os::file_separator())) != NULL) {
+      if ((start = strrchr(lib_name, *os::file_separator())) != nullptr) {
         lib_name = ++start;
       }
       if (strlen(lib_name) <= (prefix_len + suffix_len)) {
-        return NULL;
+        return nullptr;
       }
       lib_name += prefix_len;
       name_len = strlen(lib_name) - suffix_len;
     }
   }
-  len = (lib_name != NULL ? name_len : 0) + strlen(sym_name) + 2;
+  len = (lib_name != nullptr ? name_len : 0) + strlen(sym_name) + 2;
   agent_entry_name = NEW_C_HEAP_ARRAY_RETURN_NULL(char, len, mtThread);
-  if (agent_entry_name == NULL) {
-    return NULL;
+  if (agent_entry_name == nullptr) {
+    return nullptr;
   }
   strcpy(agent_entry_name, sym_name);
-  if (lib_name != NULL) {
+  if (lib_name != nullptr) {
     strcat(agent_entry_name, "_");
     strncat(agent_entry_name, lib_name, name_len);
   }
   return agent_entry_name;
 }
 
+// Sleep forever; naked call to OS-specific sleep; use with CAUTION
+void os::infinite_sleep() {
+  while (true) {    // sleep forever ...
+    ::sleep(100);   // ... 100 seconds at a time
+  }
+}
 
 void os::naked_short_nanosleep(jlong ns) {
   struct timespec req;
   assert(ns > -1 && ns < NANOUNITS, "Un-interruptable sleep, short time use only");
   req.tv_sec = 0;
   req.tv_nsec = ns;
-  ::nanosleep(&req, NULL);
+  ::nanosleep(&req, nullptr);
   return;
 }
 
@@ -712,54 +1020,53 @@ char* os::Posix::describe_pthread_attr(char* buf, size_t buflen, const pthread_a
   int detachstate = 0;
   pthread_attr_getstacksize(attr, &stack_size);
   pthread_attr_getguardsize(attr, &guard_size);
-  // Work around linux NPTL implementation error, see also os::create_thread() in os_linux.cpp.
-  LINUX_ONLY(stack_size -= guard_size);
+  // Work around glibc stack guard issue, see os::create_thread() in os_linux.cpp.
+  LINUX_ONLY(if (os::Linux::adjustStackSizeForGuardPages()) stack_size -= guard_size;)
   pthread_attr_getdetachstate(attr, &detachstate);
   jio_snprintf(buf, buflen, "stacksize: " SIZE_FORMAT "k, guardsize: " SIZE_FORMAT "k, %s",
-    stack_size / 1024, guard_size / 1024,
+    stack_size / K, guard_size / K,
     (detachstate == PTHREAD_CREATE_DETACHED ? "detached" : "joinable"));
   return buf;
 }
 
-char* os::Posix::realpath(const char* filename, char* outbuf, size_t outbuflen) {
+char* os::realpath(const char* filename, char* outbuf, size_t outbuflen) {
 
-  if (filename == NULL || outbuf == NULL || outbuflen < 1) {
-    assert(false, "os::Posix::realpath: invalid arguments.");
+  if (filename == nullptr || outbuf == nullptr || outbuflen < 1) {
+    assert(false, "os::realpath: invalid arguments.");
     errno = EINVAL;
-    return NULL;
+    return nullptr;
   }
 
-  char* result = NULL;
+  char* result = nullptr;
 
   // This assumes platform realpath() is implemented according to POSIX.1-2008.
-  // POSIX.1-2008 allows to specify NULL for the output buffer, in which case
+  // POSIX.1-2008 allows to specify null for the output buffer, in which case
   // output buffer is dynamically allocated and must be ::free()'d by the caller.
-  char* p = ::realpath(filename, NULL);
-  if (p != NULL) {
+  ALLOW_C_FUNCTION(::realpath, char* p = ::realpath(filename, nullptr);)
+  if (p != nullptr) {
     if (strlen(p) < outbuflen) {
       strcpy(outbuf, p);
       result = outbuf;
     } else {
       errno = ENAMETOOLONG;
     }
-    ::free(p); // *not* os::free
+    ALLOW_C_FUNCTION(::free, ::free(p);) // *not* os::free
   } else {
     // Fallback for platforms struggling with modern Posix standards (AIX 5.3, 6.1). If realpath
     // returns EINVAL, this may indicate that realpath is not POSIX.1-2008 compatible and
-    // that it complains about the NULL we handed down as user buffer.
+    // that it complains about the null we handed down as user buffer.
     // In this case, use the user provided buffer but at least check whether realpath caused
     // a memory overwrite.
     if (errno == EINVAL) {
       outbuf[outbuflen - 1] = '\0';
-      p = ::realpath(filename, outbuf);
-      if (p != NULL) {
+      ALLOW_C_FUNCTION(::realpath, p = ::realpath(filename, outbuf);)
+      if (p != nullptr) {
         guarantee(outbuf[outbuflen - 1] == '\0', "realpath buffer overwrite detected.");
         result = p;
       }
     }
   }
   return result;
-
 }
 
 int os::stat(const char *path, struct stat *sbuf) {
@@ -771,6 +1078,14 @@ char * os::native_path(char *path) {
 }
 
 bool os::same_files(const char* file1, const char* file2) {
+  if (file1 == nullptr && file2 == nullptr) {
+    return true;
+  }
+
+  if (file1 == nullptr || file2 == nullptr) {
+    return false;
+  }
+
   if (strcmp(file1, file2) == 0) {
     return true;
   }
@@ -792,73 +1107,6 @@ bool os::same_files(const char* file1, const char* file2) {
     is_same = true;
   }
   return is_same;
-}
-
-// Check minimum allowable stack sizes for thread creation and to initialize
-// the java system classes, including StackOverflowError - depends on page
-// size.
-// The space needed for frames during startup is platform dependent. It
-// depends on word size, platform calling conventions, C frame layout and
-// interpreter/C1/C2 design decisions. Therefore this is given in a
-// platform (os/cpu) dependent constant.
-// To this, space for guard mechanisms is added, which depends on the
-// page size which again depends on the concrete system the VM is running
-// on. Space for libc guard pages is not included in this size.
-jint os::Posix::set_minimum_stack_sizes() {
-  size_t os_min_stack_allowed = PTHREAD_STACK_MIN;
-
-  _java_thread_min_stack_allowed = _java_thread_min_stack_allowed +
-                                   StackOverflow::stack_guard_zone_size() +
-                                   StackOverflow::stack_shadow_zone_size();
-
-  _java_thread_min_stack_allowed = align_up(_java_thread_min_stack_allowed, vm_page_size());
-  _java_thread_min_stack_allowed = MAX2(_java_thread_min_stack_allowed, os_min_stack_allowed);
-
-  size_t stack_size_in_bytes = ThreadStackSize * K;
-  if (stack_size_in_bytes != 0 &&
-      stack_size_in_bytes < _java_thread_min_stack_allowed) {
-    // The '-Xss' and '-XX:ThreadStackSize=N' options both set
-    // ThreadStackSize so we go with "Java thread stack size" instead
-    // of "ThreadStackSize" to be more friendly.
-    tty->print_cr("\nThe Java thread stack size specified is too small. "
-                  "Specify at least " SIZE_FORMAT "k",
-                  _java_thread_min_stack_allowed / K);
-    return JNI_ERR;
-  }
-
-  // Make the stack size a multiple of the page size so that
-  // the yellow/red zones can be guarded.
-  JavaThread::set_stack_size_at_create(align_up(stack_size_in_bytes, vm_page_size()));
-
-  // Reminder: a compiler thread is a Java thread.
-  _compiler_thread_min_stack_allowed = _compiler_thread_min_stack_allowed +
-                                       StackOverflow::stack_guard_zone_size() +
-                                       StackOverflow::stack_shadow_zone_size();
-
-  _compiler_thread_min_stack_allowed = align_up(_compiler_thread_min_stack_allowed, vm_page_size());
-  _compiler_thread_min_stack_allowed = MAX2(_compiler_thread_min_stack_allowed, os_min_stack_allowed);
-
-  stack_size_in_bytes = CompilerThreadStackSize * K;
-  if (stack_size_in_bytes != 0 &&
-      stack_size_in_bytes < _compiler_thread_min_stack_allowed) {
-    tty->print_cr("\nThe CompilerThreadStackSize specified is too small. "
-                  "Specify at least " SIZE_FORMAT "k",
-                  _compiler_thread_min_stack_allowed / K);
-    return JNI_ERR;
-  }
-
-  _vm_internal_thread_min_stack_allowed = align_up(_vm_internal_thread_min_stack_allowed, vm_page_size());
-  _vm_internal_thread_min_stack_allowed = MAX2(_vm_internal_thread_min_stack_allowed, os_min_stack_allowed);
-
-  stack_size_in_bytes = VMThreadStackSize * K;
-  if (stack_size_in_bytes != 0 &&
-      stack_size_in_bytes < _vm_internal_thread_min_stack_allowed) {
-    tty->print_cr("\nThe VMThreadStackSize specified is too small. "
-                  "Specify at least " SIZE_FORMAT "k",
-                  _vm_internal_thread_min_stack_allowed / K);
-    return JNI_ERR;
-  }
-  return JNI_OK;
 }
 
 // Called when creating the thread.  The minimum stack sizes have already been calculated
@@ -890,8 +1138,7 @@ size_t os::Posix::get_initial_stack_size(ThreadType thr_type, size_t req_stack_s
                       _compiler_thread_min_stack_allowed);
     break;
   case os::vm_thread:
-  case os::pgc_thread:
-  case os::cgc_thread:
+  case os::gc_thread:
   case os::watcher_thread:
   default:  // presume the unknown thr_type is a VM internal
     if (req_stack_size == 0 && VMThreadStackSize > 0) {
@@ -934,7 +1181,7 @@ static bool get_frame_at_stack_banging_point(JavaThread* thread, address pc, con
     // more complex code with compiled code
     assert(!Interpreter::contains(pc), "Interpreted methods should have been handled above");
     CodeBlob* cb = CodeCache::find_blob(pc);
-    if (cb == NULL || !cb->is_nmethod() || cb->is_frame_complete_at(pc)) {
+    if (cb == nullptr || !cb->is_nmethod() || cb->is_frame_complete_at(pc)) {
       // Not sure where the pc points to, fallback to default
       // stack overflow handling
       return false;
@@ -963,13 +1210,14 @@ bool os::Posix::handle_stack_overflow(JavaThread* thread, address addr, address 
     if (thread->thread_state() == _thread_in_Java) {
 #ifndef ARM
       // arm32 doesn't have this
-      if (overflow_state->in_stack_reserved_zone(addr)) {
+      // vthreads don't support this
+      if (!thread->is_vthread_mounted() && overflow_state->in_stack_reserved_zone(addr)) {
         frame fr;
         if (get_frame_at_stack_banging_point(thread, pc, ucVoid, &fr)) {
           assert(fr.is_java_frame(), "Must be a Java frame");
           frame activation =
             SharedRuntime::look_for_reserved_stack_annotated_method(thread, fr);
-          if (activation.sp() != NULL) {
+          if (activation.sp() != nullptr) {
             overflow_state->disable_stack_reserved_zone();
             if (activation.is_interpreted_frame()) {
               overflow_state->set_reserved_stack_activation((address)(activation.fp()
@@ -986,7 +1234,7 @@ bool os::Posix::handle_stack_overflow(JavaThread* thread, address addr, address 
         }
       }
 #endif // ARM
-      // Throw a stack overflow exception.  Guard pages will be reenabled
+      // Throw a stack overflow exception.  Guard pages will be re-enabled
       // while unwinding the stack.
       overflow_state->disable_stack_yellow_reserved_zone();
       *stub = SharedRuntime::continuation_for_implicit_exception(thread, pc, SharedRuntime::STACK_OVERFLOW);
@@ -996,8 +1244,8 @@ bool os::Posix::handle_stack_overflow(JavaThread* thread, address addr, address 
       return true; // just continue
     }
   } else if (overflow_state->in_stack_red_zone(addr)) {
-    // Fatal red zone violation.  Disable the guard pages and fall through
-    // to handle_unexpected_exception way down below.
+    // Fatal red zone violation. Disable the guard pages and keep
+    // on handling the signal.
     overflow_state->disable_stack_red_zone();
     tty->print_raw_cr("An irrecoverable stack overflow has occurred.");
 
@@ -1007,8 +1255,8 @@ bool os::Posix::handle_stack_overflow(JavaThread* thread, address addr, address 
                       "enabled executable stack (see man page execstack(8))");
 
   } else {
-#if !defined(AIX) && !defined(__APPLE__)
-    // bsd and aix don't have this
+#ifdef LINUX
+    // This only works with os::Linux::manually_expand_stack()
 
     // Accessing stack address below sp may cause SEGV if current
     // thread has MAP_GROWSDOWN stack. This should only happen when
@@ -1026,7 +1274,7 @@ bool os::Posix::handle_stack_overflow(JavaThread* thread, address addr, address 
     }
 #else
     tty->print_raw_cr("SIGSEGV happened inside stack but outside yellow and red zone.");
-#endif // AIX or BSD
+#endif // LINUX
   }
   return false;
 }
@@ -1042,62 +1290,6 @@ bool os::Posix::matches_effective_uid_or_root(uid_t uid) {
 
 bool os::Posix::matches_effective_uid_and_gid_or_root(uid_t uid, gid_t gid) {
     return is_root(uid) || (geteuid() == uid && getegid() == gid);
-}
-
-Thread* os::ThreadCrashProtection::_protected_thread = NULL;
-os::ThreadCrashProtection* os::ThreadCrashProtection::_crash_protection = NULL;
-
-os::ThreadCrashProtection::ThreadCrashProtection() {
-  _protected_thread = Thread::current();
-  assert(_protected_thread->is_JfrSampler_thread(), "should be JFRSampler");
-}
-
-/*
- * See the caveats for this class in os_posix.hpp
- * Protects the callback call so that SIGSEGV / SIGBUS jumps back into this
- * method and returns false. If none of the signals are raised, returns true.
- * The callback is supposed to provide the method that should be protected.
- */
-bool os::ThreadCrashProtection::call(os::CrashProtectionCallback& cb) {
-  sigset_t saved_sig_mask;
-
-  // we cannot rely on sigsetjmp/siglongjmp to save/restore the signal mask
-  // since on at least some systems (OS X) siglongjmp will restore the mask
-  // for the process, not the thread
-  pthread_sigmask(0, NULL, &saved_sig_mask);
-  if (sigsetjmp(_jmpbuf, 0) == 0) {
-    // make sure we can see in the signal handler that we have crash protection
-    // installed
-    _crash_protection = this;
-    cb.call();
-    // and clear the crash protection
-    _crash_protection = NULL;
-    _protected_thread = NULL;
-    return true;
-  }
-  // this happens when we siglongjmp() back
-  pthread_sigmask(SIG_SETMASK, &saved_sig_mask, NULL);
-  _crash_protection = NULL;
-  _protected_thread = NULL;
-  return false;
-}
-
-void os::ThreadCrashProtection::restore() {
-  assert(_crash_protection != NULL, "must have crash protection");
-  siglongjmp(_jmpbuf, 1);
-}
-
-void os::ThreadCrashProtection::check_crash_protection(int sig,
-    Thread* thread) {
-
-  if (thread != NULL &&
-      thread == _protected_thread &&
-      _crash_protection != NULL) {
-
-    if (sig == SIGSEGV || sig == SIGBUS) {
-      _crash_protection->restore();
-    }
-  }
 }
 
 // Shared clock/time and other supporting routines for pthread_mutex/cond
@@ -1126,17 +1318,21 @@ static void pthread_init_common(void) {
   if ((status = pthread_mutexattr_settype(_mutexAttr, PTHREAD_MUTEX_NORMAL)) != 0) {
     fatal("pthread_mutexattr_settype: %s", os::strerror(status));
   }
-  os::PlatformMutex::init();
+  PlatformMutex::init();
 }
 
-static int (*_pthread_condattr_setclock)(pthread_condattr_t *, clockid_t) = NULL;
+static int (*_pthread_condattr_setclock)(pthread_condattr_t *, clockid_t) = nullptr;
 
 static bool _use_clock_monotonic_condattr = false;
 
 // Determine what POSIX API's are present and do appropriate
 // configuration.
 void os::Posix::init(void) {
-
+#if defined(_ALLBSD_SOURCE)
+  clock_tics_per_sec = CLK_TCK;
+#else
+  clock_tics_per_sec = checked_cast<int>(sysconf(_SC_CLK_TCK));
+#endif
   // NOTE: no logging available when this is called. Put logging
   // statements in init_2().
 
@@ -1146,7 +1342,7 @@ void os::Posix::init(void) {
   int (*condattr_setclock_func)(pthread_condattr_t*, clockid_t) =
     (int (*)(pthread_condattr_t*, clockid_t))dlsym(RTLD_DEFAULT,
                                                    "pthread_condattr_setclock");
-  if (condattr_setclock_func != NULL) {
+  if (condattr_setclock_func != nullptr) {
     _pthread_condattr_setclock = condattr_setclock_func;
   }
 
@@ -1155,7 +1351,7 @@ void os::Posix::init(void) {
   pthread_init_common();
 
   int status;
-  if (_pthread_condattr_setclock != NULL) {
+  if (_pthread_condattr_setclock != nullptr) {
     if ((status = _pthread_condattr_setclock(_condAttr, CLOCK_MONOTONIC)) != 0) {
       if (status == EINVAL) {
         _use_clock_monotonic_condattr = false;
@@ -1168,12 +1364,14 @@ void os::Posix::init(void) {
       _use_clock_monotonic_condattr = true;
     }
   }
+
+  initial_time_count = javaTimeNanos();
 }
 
 void os::Posix::init_2(void) {
   log_info(os)("Use of CLOCK_MONOTONIC is supported");
   log_info(os)("Use of pthread_condattr_setclock is%s supported",
-               (_pthread_condattr_setclock != NULL ? "" : " not"));
+               (_pthread_condattr_setclock != nullptr ? "" : " not"));
   log_info(os)("Relative timed-wait using pthread_cond_timedwait is associated with %s",
                _use_clock_monotonic_condattr ? "CLOCK_MONOTONIC" : "the default clock");
 }
@@ -1257,7 +1455,7 @@ static jlong millis_to_nanos_bounded(jlong millis) {
 
 static void to_abstime(timespec* abstime, jlong timeout,
                        bool isAbsolute, bool isRealtime) {
-  DEBUG_ONLY(int max_secs = MAX_SECS;)
+  DEBUG_ONLY(time_t max_secs = MAX_SECS;)
 
   if (timeout < 0) {
     timeout = 0;
@@ -1335,12 +1533,57 @@ void os::javaTimeNanos_info(jvmtiTimerInfo *info_ptr) {
   info_ptr->may_skip_forward = false;       // not subject to resetting or drifting
   info_ptr->kind = JVMTI_TIMER_ELAPSED;     // elapsed not CPU time
 }
-
 #endif // ! APPLE && !AIX
 
-// Shared pthread_mutex/cond based PlatformEvent implementation.
-// Not currently usable by Solaris.
+// Time since start-up in seconds to a fine granularity.
+double os::elapsedTime() {
+  return ((double)os::elapsed_counter()) / (double)os::elapsed_frequency(); // nanosecond resolution
+}
 
+jlong os::elapsed_counter() {
+  return os::javaTimeNanos() - initial_time_count;
+}
+
+jlong os::elapsed_frequency() {
+  return NANOSECS_PER_SEC; // nanosecond resolution
+}
+
+bool os::supports_vtime() { return true; }
+
+// Return the real, user, and system times in seconds from an
+// arbitrary fixed point in the past.
+bool os::getTimesSecs(double* process_real_time,
+                      double* process_user_time,
+                      double* process_system_time) {
+  struct tms ticks;
+  clock_t real_ticks = times(&ticks);
+
+  if (real_ticks == (clock_t) (-1)) {
+    return false;
+  } else {
+    double ticks_per_second = (double) clock_tics_per_sec;
+    *process_user_time = ((double) ticks.tms_utime) / ticks_per_second;
+    *process_system_time = ((double) ticks.tms_stime) / ticks_per_second;
+    *process_real_time = ((double) real_ticks) / ticks_per_second;
+
+    return true;
+  }
+}
+
+char * os::local_time_string(char *buf, size_t buflen) {
+  struct tm t;
+  time_t long_time;
+  time(&long_time);
+  localtime_r(&long_time, &t);
+  jio_snprintf(buf, buflen, "%d-%02d-%02d %02d:%02d:%02d",
+               t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+               t.tm_hour, t.tm_min, t.tm_sec);
+  return buf;
+}
+
+struct tm* os::localtime_pd(const time_t* clock, struct tm*  res) {
+  return localtime_r(clock, res);
+}
 
 // PlatformEvent
 //
@@ -1357,7 +1600,7 @@ void os::javaTimeNanos_info(jvmtiTimerInfo *info_ptr) {
 //    Having three states allows for some detection of bad usage - see
 //    comments on unpark().
 
-os::PlatformEvent::PlatformEvent() {
+PlatformEvent::PlatformEvent() {
   int status = pthread_cond_init(_cond, _condAttr);
   assert_status(status == 0, status, "cond_init");
   status = pthread_mutex_init(_mutex, _mutexAttr);
@@ -1366,7 +1609,7 @@ os::PlatformEvent::PlatformEvent() {
   _nParked = 0;
 }
 
-void os::PlatformEvent::park() {       // AKA "down()"
+void PlatformEvent::park() {       // AKA "down()"
   // Transitions for _event:
   //   -1 => -1 : illegal
   //    1 =>  0 : pass - return immediately
@@ -1408,7 +1651,13 @@ void os::PlatformEvent::park() {       // AKA "down()"
   guarantee(_event >= 0, "invariant");
 }
 
-int os::PlatformEvent::park(jlong millis) {
+int PlatformEvent::park(jlong millis) {
+  return park_nanos(millis_to_nanos_bounded(millis));
+}
+
+int PlatformEvent::park_nanos(jlong nanos) {
+  assert(nanos > 0, "nanos are positive");
+
   // Transitions for _event:
   //   -1 => -1 : illegal
   //    1 =>  0 : pass - return immediately
@@ -1428,7 +1677,7 @@ int os::PlatformEvent::park(jlong millis) {
 
   if (v == 0) { // Do this the hard way by blocking ...
     struct timespec abst;
-    to_abstime(&abst, millis_to_nanos_bounded(millis), false, false);
+    to_abstime(&abst, nanos, false, false);
 
     int ret = OS_TIMEOUT;
     int status = pthread_mutex_lock(_mutex);
@@ -1440,9 +1689,7 @@ int os::PlatformEvent::park(jlong millis) {
       status = pthread_cond_timedwait(_cond, _mutex, &abst);
       assert_status(status == 0 || status == ETIMEDOUT,
                     status, "cond_timedwait");
-      // OS-level "spurious wakeups" are ignored unless the archaic
-      // FilterSpuriousWakeups is set false. That flag should be obsoleted.
-      if (!FilterSpuriousWakeups) break;
+      // OS-level "spurious wakeups" are ignored
       if (status == ETIMEDOUT) break;
     }
     --_nParked;
@@ -1462,7 +1709,7 @@ int os::PlatformEvent::park(jlong millis) {
   return OS_OK;
 }
 
-void os::PlatformEvent::unpark() {
+void PlatformEvent::unpark() {
   // Transitions for _event:
   //    0 => 1 : just return
   //    1 => 1 : just return
@@ -1505,16 +1752,16 @@ void os::PlatformEvent::unpark() {
 
 // JSR166 support
 
- os::PlatformParker::PlatformParker() : _counter(0), _cur_index(-1) {
+ PlatformParker::PlatformParker() : _counter(0), _cur_index(-1) {
   int status = pthread_cond_init(&_cond[REL_INDEX], _condAttr);
   assert_status(status == 0, status, "cond_init rel");
-  status = pthread_cond_init(&_cond[ABS_INDEX], NULL);
+  status = pthread_cond_init(&_cond[ABS_INDEX], nullptr);
   assert_status(status == 0, status, "cond_init abs");
   status = pthread_mutex_init(_mutex, _mutexAttr);
   assert_status(status == 0, status, "mutex_init");
 }
 
-os::PlatformParker::~PlatformParker() {
+PlatformParker::~PlatformParker() {
   int status = pthread_cond_destroy(&_cond[REL_INDEX]);
   assert_status(status == 0, status, "cond_destroy rel");
   status = pthread_cond_destroy(&_cond[ABS_INDEX]);
@@ -1583,8 +1830,6 @@ void Parker::park(bool isAbsolute, jlong time) {
   }
 
   OSThreadWaitState osts(jt->osthread(), false /* not Object.wait() */);
-  jt->set_suspend_equivalent();
-  // cleared by handle_special_suspend_equivalent_condition() or java_suspend_self()
 
   assert(_cur_index == -1, "invariant");
   if (time == 0) {
@@ -1607,11 +1852,6 @@ void Parker::park(bool isAbsolute, jlong time) {
   // Paranoia to ensure our locked and lock-free paths interact
   // correctly with each other and Java-level accesses.
   OrderAccess::fence();
-
-  // If externally suspended while waiting, re-suspend
-  if (jt->handle_special_suspend_equivalent_condition()) {
-    jt->java_suspend_self();
-  }
 }
 
 void Parker::unpark() {
@@ -1643,25 +1883,25 @@ void Parker::unpark() {
 
 #if PLATFORM_MONITOR_IMPL_INDIRECT
 
-os::PlatformMutex::Mutex::Mutex() : _next(NULL) {
+PlatformMutex::Mutex::Mutex() : _next(nullptr) {
   int status = pthread_mutex_init(&_mutex, _mutexAttr);
   assert_status(status == 0, status, "mutex_init");
 }
 
-os::PlatformMutex::Mutex::~Mutex() {
+PlatformMutex::Mutex::~Mutex() {
   int status = pthread_mutex_destroy(&_mutex);
   assert_status(status == 0, status, "mutex_destroy");
 }
 
-pthread_mutex_t os::PlatformMutex::_freelist_lock;
-os::PlatformMutex::Mutex* os::PlatformMutex::_mutex_freelist = NULL;
+pthread_mutex_t PlatformMutex::_freelist_lock;
+PlatformMutex::Mutex* PlatformMutex::_mutex_freelist = nullptr;
 
-void os::PlatformMutex::init() {
+void PlatformMutex::init() {
   int status = pthread_mutex_init(&_freelist_lock, _mutexAttr);
   assert_status(status == 0, status, "freelist lock init");
 }
 
-struct os::PlatformMutex::WithFreeListLocked : public StackObj {
+struct PlatformMutex::WithFreeListLocked : public StackObj {
   WithFreeListLocked() {
     int status = pthread_mutex_lock(&_freelist_lock);
     assert_status(status == 0, status, "freelist lock");
@@ -1673,76 +1913,76 @@ struct os::PlatformMutex::WithFreeListLocked : public StackObj {
   }
 };
 
-os::PlatformMutex::PlatformMutex() {
+PlatformMutex::PlatformMutex() {
   {
     WithFreeListLocked wfl;
     _impl = _mutex_freelist;
-    if (_impl != NULL) {
+    if (_impl != nullptr) {
       _mutex_freelist = _impl->_next;
-      _impl->_next = NULL;
+      _impl->_next = nullptr;
       return;
     }
   }
   _impl = new Mutex();
 }
 
-os::PlatformMutex::~PlatformMutex() {
+PlatformMutex::~PlatformMutex() {
   WithFreeListLocked wfl;
-  assert(_impl->_next == NULL, "invariant");
+  assert(_impl->_next == nullptr, "invariant");
   _impl->_next = _mutex_freelist;
   _mutex_freelist = _impl;
 }
 
-os::PlatformMonitor::Cond::Cond() : _next(NULL) {
+PlatformMonitor::Cond::Cond() : _next(nullptr) {
   int status = pthread_cond_init(&_cond, _condAttr);
   assert_status(status == 0, status, "cond_init");
 }
 
-os::PlatformMonitor::Cond::~Cond() {
+PlatformMonitor::Cond::~Cond() {
   int status = pthread_cond_destroy(&_cond);
   assert_status(status == 0, status, "cond_destroy");
 }
 
-os::PlatformMonitor::Cond* os::PlatformMonitor::_cond_freelist = NULL;
+PlatformMonitor::Cond* PlatformMonitor::_cond_freelist = nullptr;
 
-os::PlatformMonitor::PlatformMonitor() {
+PlatformMonitor::PlatformMonitor() {
   {
     WithFreeListLocked wfl;
     _impl = _cond_freelist;
-    if (_impl != NULL) {
+    if (_impl != nullptr) {
       _cond_freelist = _impl->_next;
-      _impl->_next = NULL;
+      _impl->_next = nullptr;
       return;
     }
   }
   _impl = new Cond();
 }
 
-os::PlatformMonitor::~PlatformMonitor() {
+PlatformMonitor::~PlatformMonitor() {
   WithFreeListLocked wfl;
-  assert(_impl->_next == NULL, "invariant");
+  assert(_impl->_next == nullptr, "invariant");
   _impl->_next = _cond_freelist;
   _cond_freelist = _impl;
 }
 
 #else
 
-os::PlatformMutex::PlatformMutex() {
+PlatformMutex::PlatformMutex() {
   int status = pthread_mutex_init(&_mutex, _mutexAttr);
   assert_status(status == 0, status, "mutex_init");
 }
 
-os::PlatformMutex::~PlatformMutex() {
+PlatformMutex::~PlatformMutex() {
   int status = pthread_mutex_destroy(&_mutex);
   assert_status(status == 0, status, "mutex_destroy");
 }
 
-os::PlatformMonitor::PlatformMonitor() {
+PlatformMonitor::PlatformMonitor() {
   int status = pthread_cond_init(&_cond, _condAttr);
   assert_status(status == 0, status, "cond_init");
 }
 
-os::PlatformMonitor::~PlatformMonitor() {
+PlatformMonitor::~PlatformMonitor() {
   int status = pthread_cond_destroy(&_cond);
   assert_status(status == 0, status, "cond_destroy");
 }
@@ -1750,17 +1990,17 @@ os::PlatformMonitor::~PlatformMonitor() {
 #endif // PLATFORM_MONITOR_IMPL_INDIRECT
 
 // Must already be locked
-int os::PlatformMonitor::wait(jlong millis) {
-  assert(millis >= 0, "negative timeout");
+int PlatformMonitor::wait(uint64_t millis) {
   if (millis > 0) {
     struct timespec abst;
     // We have to watch for overflow when converting millis to nanos,
     // but if millis is that large then we will end up limiting to
-    // MAX_SECS anyway, so just do that here.
+    // MAX_SECS anyway, so just do that here. This also handles values
+    // larger than int64_t max.
     if (millis / MILLIUNITS > MAX_SECS) {
-      millis = jlong(MAX_SECS) * MILLIUNITS;
+      millis = uint64_t(MAX_SECS) * MILLIUNITS;
     }
-    to_abstime(&abst, millis_to_nanos(millis), false, false);
+    to_abstime(&abst, millis_to_nanos(int64_t(millis)), false, false);
 
     int ret = OS_TIMEOUT;
     int status = pthread_cond_timedwait(cond(), mutex(), &abst);
@@ -1793,36 +2033,16 @@ char** os::get_environ() { return environ; }
 //         doesn't block SIGINT et al.
 //        -this function is unsafe to use in non-error situations, mainly
 //         because the child process will inherit all parent descriptors.
-int os::fork_and_exec(const char* cmd, bool prefer_vfork) {
-  const char * argv[4] = {"sh", "-c", cmd, NULL};
-
-  pid_t pid ;
-
+int os::fork_and_exec(const char* cmd) {
+  const char* argv[4] = {"sh", "-c", cmd, nullptr};
+  pid_t pid = -1;
   char** env = os::get_environ();
-
-  // Use always vfork on AIX, since its safe and helps with analyzing OOM situations.
-  // Otherwise leave it up to the caller.
-  AIX_ONLY(prefer_vfork = true;)
-  pid = prefer_vfork ? ::vfork() : ::fork();
-
-  if (pid < 0) {
-    // fork failed
-    return -1;
-
-  } else if (pid == 0) {
-    // child process
-
-    ::execve("/bin/sh", (char* const*)argv, env);
-
-    // execve failed
-    ::_exit(-1);
-
-  } else  {
-    // copied from J2SE ..._waitForProcessExit() in UNIXProcess_md.c; we don't
-    // care about the actual exit code, for now.
-
+  // Note: cast is needed because posix_spawn() requires - for compatibility with ancient
+  // C-code - a non-const argv/envp pointer array. But it is fine to hand in literal
+  // strings and just cast the constness away. See also ProcessImpl_md.c.
+  int rc = ::posix_spawn(&pid, "/bin/sh", nullptr, nullptr, (char**) argv, env);
+  if (rc == 0) {
     int status;
-
     // Wait for the child process to exit.  This returns immediately if
     // the child has already exited. */
     while (::waitpid(pid, &status, 0) < 0) {
@@ -1832,7 +2052,6 @@ int os::fork_and_exec(const char* cmd, bool prefer_vfork) {
       default: return -1;
       }
     }
-
     if (WIFEXITED(status)) {
       // The child exited normally; get its exit code.
       return WEXITSTATUS(status);
@@ -1847,7 +2066,29 @@ int os::fork_and_exec(const char* cmd, bool prefer_vfork) {
       // Unknown exit code; pass it through
       return status;
     }
+  } else {
+    // Don't log, we are inside error handling
+    return -1;
   }
+}
+
+bool os::message_box(const char* title, const char* message) {
+  int i;
+  fdStream err(defaultStream::error_fd());
+  for (i = 0; i < 78; i++) err.print_raw("=");
+  err.cr();
+  err.print_raw_cr(title);
+  for (i = 0; i < 78; i++) err.print_raw("-");
+  err.cr();
+  err.print_raw_cr(message);
+  for (i = 0; i < 78; i++) err.print_raw("=");
+  err.cr();
+
+  char buf[16];
+  // Prevent process from exiting upon "read error" without consuming all CPU
+  while (::read(0, buf, sizeof(buf)) <= 0) { ::sleep(100); }
+
+  return buf[0] == 'y' || buf[0] == 'Y';
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1869,7 +2110,7 @@ void os::shutdown() {
 
   // Check for abort hook
   abort_hook_t abort_hook = Arguments::abort_hook();
-  if (abort_hook != NULL) {
+  if (abort_hook != nullptr) {
     abort_hook();
   }
 
@@ -1878,13 +2119,17 @@ void os::shutdown() {
 // Note: os::abort() might be called very early during initialization, or
 // called from signal handler. Before adding something to os::abort(), make
 // sure it is async-safe and can handle partially initialized VM.
+// Also note we can abort while other threads continue to run, so we can
+// easily trigger secondary faults in those threads. To reduce the likelihood
+// of that we use _exit rather than exit, so that no atexit hooks get run.
+// But note that os::shutdown() could also trigger secondary faults.
 void os::abort(bool dump_core, void* siginfo, const void* context) {
   os::shutdown();
   if (dump_core) {
     LINUX_ONLY(if (DumpPrivateMappingsInCore) ClassLoader::close_jrt_image();)
     ::abort(); // dump core
   }
-  ::exit(1);
+  os::_exit(1);
 }
 
 // Die immediately, no exit hook, no abort hook, no cleanup.
@@ -1893,8 +2138,63 @@ void os::die() {
   if (TestUnresponsiveErrorHandler && !CreateCoredumpOnCrash) {
     // For TimeoutInErrorHandlingTest.java, we just kill the VM
     // and don't take the time to generate a core file.
-    os::signal_raise(SIGKILL);
-  } else {
-    ::abort();
+    ::raise(SIGKILL);
+    // ::raise is not noreturn, even though with SIGKILL it definitely won't
+    // return.  Hence "fall through" to ::abort, which is declared noreturn.
   }
+  ::abort();
+}
+
+const char* os::file_separator() { return "/"; }
+const char* os::line_separator() { return "\n"; }
+const char* os::path_separator() { return ":"; }
+
+// Map file into memory; uses mmap().
+// Notes:
+// - if caller specifies addr, MAP_FIXED is used. That means existing
+//   mappings will be replaced.
+// - The file descriptor must be valid (to create anonymous mappings, use
+//   os::reserve_memory()).
+// Returns address to mapped memory, nullptr on error
+char* os::pd_map_memory(int fd, const char* unused,
+                        size_t file_offset, char *addr, size_t bytes,
+                        bool read_only, bool allow_exec) {
+
+  assert(fd != -1, "Specify a valid file descriptor");
+
+  int prot;
+  int flags = MAP_PRIVATE;
+
+  if (read_only) {
+    prot = PROT_READ;
+  } else {
+    prot = PROT_READ | PROT_WRITE;
+  }
+
+  if (allow_exec) {
+    prot |= PROT_EXEC;
+  }
+
+  if (addr != nullptr) {
+    flags |= MAP_FIXED;
+  }
+
+  char* mapped_address = (char*)mmap(addr, (size_t)bytes, prot, flags,
+                                     fd, file_offset);
+  if (mapped_address == MAP_FAILED) {
+    return nullptr;
+  }
+
+  // If we did specify an address, and the mapping succeeded, it should
+  // have returned that address since we specify MAP_FIXED
+  assert(addr == nullptr || addr == mapped_address,
+         "mmap+MAP_FIXED returned " PTR_FORMAT ", expected " PTR_FORMAT,
+         p2i(mapped_address), p2i(addr));
+
+  return mapped_address;
+}
+
+// Unmap a block of memory. Uses munmap.
+bool os::pd_unmap_memory(char* addr, size_t bytes) {
+  return munmap(addr, bytes) == 0;
 }

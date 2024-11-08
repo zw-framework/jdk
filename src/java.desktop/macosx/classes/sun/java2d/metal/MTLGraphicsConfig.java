@@ -29,7 +29,6 @@ import sun.awt.CGraphicsConfig;
 import sun.awt.CGraphicsDevice;
 import sun.awt.image.OffScreenImage;
 import sun.awt.image.SunVolatileImage;
-import sun.awt.image.SurfaceManager;
 import sun.java2d.Disposer;
 import sun.java2d.DisposerRecord;
 import sun.java2d.Surface;
@@ -70,11 +69,11 @@ import static sun.java2d.pipe.hw.ContextCapabilities.*;
 import static sun.java2d.metal.MTLContext.MTLContextCaps.CAPS_EXT_BIOP_SHADER;
 
 public final class MTLGraphicsConfig extends CGraphicsConfig
-        implements AccelGraphicsConfig, SurfaceManager.ProxiedGraphicsConfig
+        implements AccelGraphicsConfig
 {
-    private static boolean mtlAvailable;
     private static ImageCapabilities imageCaps = new MTLImageCaps();
 
+    @SuppressWarnings("removal")
     private static final String mtlShadersLib = AccessController.doPrivileged(
             (PrivilegedAction<String>) () ->
                     System.getProperty("java.home", "") + File.separator +
@@ -88,7 +87,6 @@ public final class MTLGraphicsConfig extends CGraphicsConfig
     private final Object disposerReferent = new Object();
     private final int maxTextureSize;
 
-    private static native boolean isMetalFrameworkAvailable();
     private static native boolean tryLoadMetalLibrary(int displayID, String shaderLib);
     private static native long getMTLConfigInfo(int displayID, String mtlShadersLib);
 
@@ -97,10 +95,6 @@ public final class MTLGraphicsConfig extends CGraphicsConfig
      * called under MTLRQ lock.
      */
     private static native int nativeGetMaxTextureSize();
-
-    static {
-        mtlAvailable = isMetalFrameworkAvailable();
-    }
 
     private MTLGraphicsConfig(CGraphicsDevice device,
                               long configInfo, int maxTextureSize,
@@ -117,11 +111,6 @@ public final class MTLGraphicsConfig extends CGraphicsConfig
                 new MTLGCDisposerRecord(pConfigInfo));
     }
 
-    @Override
-    public Object getProxyKey() {
-        return this;
-    }
-
     public SurfaceData createManagedSurface(int w, int h, int transparency) {
         return MTLSurfaceData.createData(this, w, h,
                 getColorModel(transparency),
@@ -132,10 +121,6 @@ public final class MTLGraphicsConfig extends CGraphicsConfig
     public static MTLGraphicsConfig getConfig(CGraphicsDevice device,
                                               int displayID)
     {
-        if (!mtlAvailable) {
-            return null;
-        }
-
         if (!tryLoadMetalLibrary(displayID, mtlShadersLib)) {
             return null;
         }
@@ -145,10 +130,6 @@ public final class MTLGraphicsConfig extends CGraphicsConfig
         MTLRenderQueue rq = MTLRenderQueue.getInstance();
         rq.lock();
         try {
-            // getMTLConfigInfo() creates and destroys temporary
-            // surfaces/contexts, so we should first invalidate the current
-            // Java-level context and flush the queue...
-            MTLContext.invalidateCurrentContext();
             cfginfo = getMTLConfigInfo(displayID, mtlShadersLib);
             if (cfginfo != 0L) {
                 textureSize = nativeGetMaxTextureSize();
@@ -172,10 +153,6 @@ public final class MTLGraphicsConfig extends CGraphicsConfig
                         CAPS_EXT_BIOP_SHADER | CAPS_EXT_GRAD_SHADER,
                 null);
         return new MTLGraphicsConfig(device, cfginfo, textureSize, caps);
-    }
-
-    public static boolean isMetalAvailable() {
-        return mtlAvailable;
     }
 
     /**

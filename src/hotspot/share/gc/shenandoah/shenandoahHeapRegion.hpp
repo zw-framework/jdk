@@ -30,7 +30,6 @@
 #include "gc/shenandoah/shenandoahAllocRequest.hpp"
 #include "gc/shenandoah/shenandoahAsserts.hpp"
 #include "gc/shenandoah/shenandoahHeap.hpp"
-#include "gc/shenandoah/shenandoahPacer.hpp"
 #include "gc/shenandoah/shenandoahPadding.hpp"
 #include "utilities/sizes.hpp"
 
@@ -163,7 +162,7 @@ private:
   void report_illegal_transition(const char* method);
 
 public:
-  static const int region_states_num() {
+  static int region_states_num() {
     return _REGION_STATES_NUM;
   }
 
@@ -218,8 +217,6 @@ private:
   static size_t RegionSizeWordsShift;
   static size_t RegionSizeBytesMask;
   static size_t RegionSizeWordsMask;
-  static size_t HumongousThresholdBytes;
-  static size_t HumongousThresholdWords;
   static size_t MaxTLABSizeBytes;
   static size_t MaxTLABSizeWords;
 
@@ -251,7 +248,8 @@ public:
 
   static const size_t MIN_NUM_REGIONS = 10;
 
-  static void setup_sizes(size_t max_heap_size);
+  // Return adjusted max heap size
+  static size_t setup_sizes(size_t max_heap_size);
 
   double empty_time() {
     return _empty_time;
@@ -259,6 +257,10 @@ public:
 
   inline static size_t required_regions(size_t bytes) {
     return (bytes + ShenandoahHeapRegion::region_size_bytes() - 1) >> ShenandoahHeapRegion::region_size_bytes_shift();
+  }
+
+  inline static bool requires_humongous(size_t words) {
+    return words > ShenandoahHeapRegion::RegionSizeWords;
   }
 
   inline static size_t region_count() {
@@ -313,14 +315,6 @@ public:
     return (jint)ShenandoahHeapRegion::RegionSizeWordsShift;
   }
 
-  inline static size_t humongous_threshold_bytes() {
-    return ShenandoahHeapRegion::HumongousThresholdBytes;
-  }
-
-  inline static size_t humongous_threshold_words() {
-    return ShenandoahHeapRegion::HumongousThresholdWords;
-  }
-
   inline static size_t max_tlab_size_bytes() {
     return ShenandoahHeapRegion::MaxTLABSizeBytes;
   }
@@ -333,7 +327,7 @@ public:
     return _index;
   }
 
-  // Allocation (return NULL if full)
+  // Allocation (return null if full)
   inline HeapWord* allocate(size_t word_size, ShenandoahAllocRequest::Type type);
 
   inline void clear_live_data();

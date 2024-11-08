@@ -35,6 +35,8 @@
 
 package java.util.concurrent.atomic;
 
+import jdk.internal.invoke.MhUtil;
+
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.function.BinaryOperator;
@@ -50,15 +52,8 @@ import java.util.function.UnaryOperator;
  */
 public class AtomicReference<V> implements java.io.Serializable {
     private static final long serialVersionUID = -1848883965231344442L;
-    private static final VarHandle VALUE;
-    static {
-        try {
-            MethodHandles.Lookup l = MethodHandles.lookup();
-            VALUE = l.findVarHandle(AtomicReference.class, "value", Object.class);
-        } catch (ReflectiveOperationException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
+    private static final VarHandle VALUE = MhUtil.findVarHandle(
+            MethodHandles.lookup(), "value", Object.class);
 
     @SuppressWarnings("serial") // Conditionally serializable
     private volatile V value;
@@ -269,8 +264,7 @@ public class AtomicReference<V> implements java.io.Serializable {
     }
 
     /**
-     * Returns the String representation of the current value.
-     * @return the String representation of the current value
+     * {@return the String representation of the current value}
      */
     public String toString() {
         return String.valueOf(get());
@@ -353,7 +347,7 @@ public class AtomicReference<V> implements java.io.Serializable {
      *
      * @param expectedValue the expected value
      * @param newValue the new value
-     * @return the witness value, which will be the same as the
+     * @return the <em>witness value</em>, which will be the same as the
      * expected value if successful
      * @since 9
      */
@@ -369,7 +363,7 @@ public class AtomicReference<V> implements java.io.Serializable {
      *
      * @param expectedValue the expected value
      * @param newValue the new value
-     * @return the witness value, which will be the same as the
+     * @return the <em>witness value</em>, which will be the same as the
      * expected value if successful
      * @since 9
      */
@@ -385,7 +379,7 @@ public class AtomicReference<V> implements java.io.Serializable {
      *
      * @param expectedValue the expected value
      * @param newValue the new value
-     * @return the witness value, which will be the same as the
+     * @return the <em>witness value</em>, which will be the same as the
      * expected value if successful
      * @since 9
      */

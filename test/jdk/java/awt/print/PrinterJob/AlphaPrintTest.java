@@ -22,7 +22,7 @@
  */
 
 /*
- * @test
+ * @test id=Z
  * @bug 8240654
  * @summary Test printing alpha colors - banded printing works with ZGC.
  * @key headful printer

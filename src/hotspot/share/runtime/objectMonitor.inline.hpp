@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,40 +25,81 @@
 #ifndef SHARE_RUNTIME_OBJECTMONITOR_INLINE_HPP
 #define SHARE_RUNTIME_OBJECTMONITOR_INLINE_HPP
 
+#include "runtime/objectMonitor.hpp"
+
 #include "logging/log.hpp"
 #include "oops/access.inline.hpp"
+#include "oops/markWord.hpp"
 #include "runtime/atomic.hpp"
-#include "runtime/objectMonitor.hpp"
+#include "runtime/globals.hpp"
+#include "runtime/lockStack.inline.hpp"
 #include "runtime/synchronizer.hpp"
+#include "utilities/checkedCast.hpp"
+#include "utilities/globalDefinitions.hpp"
 
-inline intptr_t ObjectMonitor::is_entered(JavaThread* current) const {
-  void* owner = owner_raw();
-  if (current == owner || current->is_lock_owned((address)owner)) {
-    return 1;
+inline bool ObjectMonitor::is_entered(JavaThread* current) const {
+  if (LockingMode == LM_LIGHTWEIGHT) {
+    if (is_owner_anonymous()) {
+      return current->lock_stack().contains(object());
+    } else {
+      return current == owner_raw();
+    }
+  } else {
+    void* owner = owner_raw();
+    if (current == owner || current->is_lock_owned((address)owner)) {
+      return true;
+    }
   }
-  return 0;
+  return false;
+}
+
+inline uintptr_t ObjectMonitor::metadata() const {
+  return Atomic::load(&_metadata);
+}
+
+inline void ObjectMonitor::set_metadata(uintptr_t value) {
+  Atomic::store(&_metadata, value);
+}
+
+inline volatile uintptr_t* ObjectMonitor::metadata_addr() {
+  STATIC_ASSERT(std::is_standard_layout<ObjectMonitor>::value);
+  STATIC_ASSERT(offsetof(ObjectMonitor, _metadata) == 0);
+  return &_metadata;
 }
 
 inline markWord ObjectMonitor::header() const {
-  return Atomic::load(&_header);
-}
-
-inline volatile markWord* ObjectMonitor::header_addr() {
-  return &_header;
+  assert(!UseObjectMonitorTable, "Lightweight locking with OM table does not use header");
+  return markWord(metadata());
 }
 
 inline void ObjectMonitor::set_header(markWord hdr) {
-  Atomic::store(&_header, hdr);
+  assert(!UseObjectMonitorTable, "Lightweight locking with OM table does not use header");
+  set_metadata(hdr.value());
 }
 
-inline jint ObjectMonitor::waiters() const {
+inline intptr_t ObjectMonitor::hash() const {
+  assert(UseObjectMonitorTable, "Only used by lightweight locking with OM table");
+  return metadata();
+}
+
+inline void ObjectMonitor::set_hash(intptr_t hash) {
+  assert(UseObjectMonitorTable, "Only used by lightweight locking with OM table");
+  set_metadata(hash);
+}
+
+inline int ObjectMonitor::waiters() const {
   return _waiters;
 }
 
-// Returns NULL if DEFLATER_MARKER is observed.
+inline bool ObjectMonitor::has_owner() const {
+  void* owner = owner_raw();
+  return owner != nullptr && owner != DEFLATER_MARKER;
+}
+
+// Returns null if DEFLATER_MARKER is observed.
 inline void* ObjectMonitor::owner() const {
   void* owner = owner_raw();
-  return owner != DEFLATER_MARKER ? owner : NULL;
+  return owner != DEFLATER_MARKER ? owner : nullptr;
 }
 
 inline void* ObjectMonitor::owner_raw() const {
@@ -67,7 +108,7 @@ inline void* ObjectMonitor::owner_raw() const {
 
 // Returns true if owner field == DEFLATER_MARKER and false otherwise.
 // This accessor is called when we really need to know if the owner
-// field == DEFLATER_MARKER and any non-NULL value won't do the trick.
+// field == DEFLATER_MARKER and any non-null value won't do the trick.
 inline bool ObjectMonitor::owner_is_DEFLATER_MARKER() const {
   return owner_raw() == DEFLATER_MARKER;
 }
@@ -78,13 +119,19 @@ inline bool ObjectMonitor::is_being_async_deflated() {
 }
 
 // Return number of threads contending for this monitor.
-inline jint ObjectMonitor::contentions() const {
+inline int ObjectMonitor::contentions() const {
   return Atomic::load(&_contentions);
 }
 
 // Add value to the contentions field.
-inline void ObjectMonitor::add_to_contentions(jint value) {
+inline void ObjectMonitor::add_to_contentions(int value) {
   Atomic::add(&_contentions, value);
+}
+
+inline void ObjectMonitor::set_recursions(size_t recursions) {
+  assert(_recursions == 0, "must be");
+  assert(has_owner(), "must be owned");
+  _recursions = checked_cast<intx>(recursions);
 }
 
 // Clear _owner field; current value must match old_value.
@@ -94,7 +141,7 @@ inline void ObjectMonitor::release_clear_owner(void* old_value) {
   assert(prev == old_value, "unexpected prev owner=" INTPTR_FORMAT
          ", expected=" INTPTR_FORMAT, p2i(prev), p2i(old_value));
 #endif
-  Atomic::release_store(&_owner, (void*)NULL);
+  Atomic::release_store(&_owner, (void*)nullptr);
   log_trace(monitorinflation, owner)("release_clear_owner(): mid="
                                      INTPTR_FORMAT ", old_value=" INTPTR_FORMAT,
                                      p2i(this), p2i(old_value));
@@ -154,26 +201,53 @@ inline ObjectMonitor* ObjectMonitor::next_om() const {
   return Atomic::load(&_next_om);
 }
 
-// Get _next_om field with acquire semantics.
-inline ObjectMonitor* ObjectMonitor::next_om_acquire() const {
-  return Atomic::load_acquire(&_next_om);
-}
-
 // Simply set _next_om field to new_value.
 inline void ObjectMonitor::set_next_om(ObjectMonitor* new_value) {
   Atomic::store(&_next_om, new_value);
 }
 
-// Set _next_om field to new_value with release semantics.
-inline void ObjectMonitor::release_set_next_om(ObjectMonitor* new_value) {
-  Atomic::release_store(&_next_om, new_value);
+// Block out deflation.
+inline ObjectMonitorContentionMark::ObjectMonitorContentionMark(ObjectMonitor* monitor)
+  : _monitor(monitor), _extended(false) {
+  // Contentions is incremented to a positive value as part of the
+  // contended enter protocol, which prevents the deflater thread from
+  // winning the last part of the 2-part async deflation
+  // protocol. See: ObjectMonitor::deflate_monitor() and
+  // ObjectMonitor::TryLockWithContentionMark().
+  _monitor->add_to_contentions(1);
 }
 
-// Try to set _next_om field to new_value if the current value matches
-// old_value. Otherwise, does not change the _next_om field. Returns
-// the prior value of the _next_om field.
-inline ObjectMonitor* ObjectMonitor::try_set_next_om(ObjectMonitor* old_value, ObjectMonitor* new_value) {
-  return Atomic::cmpxchg(&_next_om, old_value, new_value);
+inline ObjectMonitorContentionMark::~ObjectMonitorContentionMark() {
+  // Decrement contentions when the contention mark goes out of
+  // scope. This opens up for deflation, if the contention mark
+  // hasn't been extended.
+  _monitor->add_to_contentions(-1);
+}
+
+inline void ObjectMonitorContentionMark::extend() {
+  // Used by ObjectMonitor::TryLockWithContentionMark() to "extend the
+  // lifetime" of the contention mark.
+  assert(!_extended, "extending twice is probably a bad design");
+  _monitor->add_to_contentions(1);
+  _extended = true;
+}
+
+inline oop ObjectMonitor::object_peek() const {
+  if (_object.is_null()) {
+    return nullptr;
+  }
+  return _object.peek();
+}
+
+inline bool ObjectMonitor::object_is_dead() const {
+  return object_peek() == nullptr;
+}
+
+inline bool ObjectMonitor::object_refers_to(oop obj) const {
+  if (_object.is_null()) {
+    return false;
+  }
+  return _object.peek() == obj;
 }
 
 #endif // SHARE_RUNTIME_OBJECTMONITOR_INLINE_HPP

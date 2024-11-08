@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2023, Oracle and/or its affiliates. All rights reserved.
  * Copyright 2007, 2008, 2009, 2010, 2011 Red Hat, Inc.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -24,18 +24,14 @@
  */
 
 #include "precompiled.hpp"
-#include "asm/assembler.hpp"
-#include "assembler_zero.inline.hpp"
+#include "asm/assembler.inline.hpp"
 #include "code/debugInfoRec.hpp"
-#include "code/icBuffer.hpp"
 #include "code/vtableStubs.hpp"
 #include "interpreter/interpreter.hpp"
-#include "oops/compiledICHolder.hpp"
 #include "runtime/interfaceSupport.inline.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/vframeArray.hpp"
 #include "vmreg_zero.inline.hpp"
-
 #ifdef COMPILER1
 #include "c1/c1_Runtime1.hpp"
 #endif
@@ -74,10 +70,9 @@ nmethod *SharedRuntime::generate_native_wrapper(MacroAssembler *masm,
                                                 int compile_id,
                                                 BasicType *sig_bt,
                                                 VMRegPair *regs,
-                                                BasicType ret_type,
-                                                address critical_entry) {
+                                                BasicType ret_type) {
   ShouldNotCallThis();
-  return NULL;
+  return nullptr;
 }
 
 int Deoptimization::last_frame_adjust(int callee_parameters,
@@ -94,7 +89,7 @@ JRT_LEAF(void, zero_stub())
   ShouldNotCallThis();
 JRT_END
 
-static RuntimeStub* generate_empty_runtime_stub(const char* name) {
+static RuntimeStub* generate_empty_runtime_stub() {
   return CAST_FROM_FN_PTR(RuntimeStub*,zero_stub);
 }
 
@@ -106,23 +101,44 @@ static DeoptimizationBlob* generate_empty_deopt_blob() {
   return CAST_FROM_FN_PTR(DeoptimizationBlob*,zero_stub);
 }
 
-
 void SharedRuntime::generate_deopt_blob() {
   _deopt_blob = generate_empty_deopt_blob();
 }
 
-SafepointBlob* SharedRuntime::generate_handler_blob(address call_ptr, int poll_type) {
+SafepointBlob* SharedRuntime::generate_handler_blob(SharedStubId id, address call_ptr) {
   return generate_empty_safepoint_blob();
 }
 
-RuntimeStub* SharedRuntime::generate_resolve_blob(address destination, const char* name) {
-  return generate_empty_runtime_stub("resolve_blob");
+RuntimeStub* SharedRuntime::generate_resolve_blob(SharedStubId id, address destination) {
+  return generate_empty_runtime_stub();
+}
+
+RuntimeStub* SharedRuntime::generate_throw_exception(SharedStubId id, address runtime_entry) {
+  return generate_empty_runtime_stub();
 }
 
 int SharedRuntime::c_calling_convention(const BasicType *sig_bt,
                                          VMRegPair *regs,
-                                         VMRegPair *regs2,
                                          int total_args_passed) {
   ShouldNotCallThis();
   return 0;
 }
+
+int SharedRuntime::vector_calling_convention(VMRegPair *regs,
+                                             uint num_bits,
+                                             uint total_args_passed) {
+  ShouldNotCallThis();
+  return 0;
+}
+
+#if INCLUDE_JFR
+RuntimeStub* SharedRuntime::generate_jfr_write_checkpoint() {
+  return nullptr;
+}
+
+RuntimeStub* SharedRuntime::generate_jfr_return_lease() {
+  return nullptr;
+}
+
+#endif // INCLUDE_JFR
+

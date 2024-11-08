@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,21 +23,22 @@
  */
 
 #include "precompiled.hpp"
-#include "jvm.h"
+#include "cds/cdsConfig.hpp"
+#include "cds/serializeClosure.hpp"
 #include "classfile/symbolTable.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "compiler/compilerDirectives.hpp"
+#include "jvm.h"
 #include "memory/allocation.inline.hpp"
 #include "memory/oopFactory.hpp"
 #include "memory/metaspaceClosure.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/signature.hpp"
-#include "utilities/tribool.hpp"
 #include "utilities/xmlstream.hpp"
 
 
-Symbol* vmSymbols::_type_signatures[T_VOID+1] = { NULL /*, NULL...*/ };
+Symbol* vmSymbols::_type_signatures[T_VOID+1] = { nullptr /*, nullptr...*/ };
 
 inline int compare_symbol(const Symbol* a, const Symbol* b) {
   if (a == b)  return 0;
@@ -76,12 +77,12 @@ static const char* vm_symbol_enum_name(vmSymbolID sid) {
 #define VM_SYMBOL_BODY(name, string) string "\0"
 static const char* vm_symbol_bodies = VM_SYMBOLS_DO(VM_SYMBOL_BODY, VM_ALIAS_IGNORE);
 
-void vmSymbols::initialize(TRAPS) {
+void vmSymbols::initialize() {
   assert(SID_LIMIT <= (1<<log2_SID_LIMIT), "must fit in this bitfield");
   assert(SID_LIMIT*5 > (1<<log2_SID_LIMIT), "make the bitfield smaller, please");
   assert(vmIntrinsics::FLAG_LIMIT <= (1 << vmIntrinsics::log2_FLAG_LIMIT), "must fit in this bitfield");
 
-  if (!UseSharedSpaces) {
+  if (!CDSConfig::is_using_archive()) {
     const char* string = &vm_symbol_bodies[0];
     for (auto index : EnumRange<vmSymbolID>{}) {
       Symbol* sym = SymbolTable::new_permanent_symbol(string);
@@ -102,7 +103,7 @@ void vmSymbols::initialize(TRAPS) {
 #ifdef ASSERT
     for (int i = (int)T_BOOLEAN; i < (int)T_VOID+1; i++) {
       Symbol* s = _type_signatures[i];
-      if (s == NULL)  continue;
+      if (s == nullptr)  continue;
       SignatureStream ss(s, false);
       assert(ss.type() == i, "matching signature");
       assert(!ss.is_reference(), "no single-char signature for T_OBJECT, etc.");
@@ -140,7 +141,7 @@ void vmSymbols::initialize(TRAPS) {
 #ifdef ASSERT
   {
     // Spot-check correspondence between strings, symbols, and enums:
-    assert(Symbol::_vm_symbols[NO_SID] == NULL, "must be");
+    assert(Symbol::_vm_symbols[NO_SID] == nullptr, "must be");
     const char* str = "java/lang/Object";
     TempNewSymbol jlo = SymbolTable::new_permanent_symbol(str);
     assert(strncmp(str, (char*)jlo->base(), jlo->utf8_length()) == 0, "");
@@ -205,13 +206,13 @@ void vmSymbols::metaspace_pointers_do(MetaspaceClosure *closure) {
 }
 
 void vmSymbols::serialize(SerializeClosure* soc) {
-  soc->do_region((u_char*)&Symbol::_vm_symbols[FIRST_SID],
+  soc->do_ptrs((void**)&Symbol::_vm_symbols[FIRST_SID],
                  (SID_LIMIT - FIRST_SID) * sizeof(Symbol::_vm_symbols[0]));
-  soc->do_region((u_char*)_type_signatures, sizeof(_type_signatures));
+  soc->do_ptrs((void**)_type_signatures, sizeof(_type_signatures));
 }
 
 #ifndef PRODUCT
-static int find_sid_calls, find_sid_probes;
+static uint find_sid_calls, find_sid_probes;
 // (Typical counts are calls=7000 and probes=17000.)
 #endif
 
@@ -293,6 +294,6 @@ vmSymbolID vmSymbols::find_sid(const Symbol* symbol) {
 
 vmSymbolID vmSymbols::find_sid(const char* symbol_name) {
   Symbol* symbol = SymbolTable::probe(symbol_name, (int) strlen(symbol_name));
-  if (symbol == NULL)  return vmSymbolID::NO_SID;
+  if (symbol == nullptr)  return vmSymbolID::NO_SID;
   return find_sid(symbol);
 }

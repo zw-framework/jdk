@@ -42,8 +42,6 @@ class outputStream;
   f(CNT_PREFIX ## CLDGRoots,                DESC_PREFIX "CLDG Roots")                  \
   f(CNT_PREFIX ## CodeCacheUnload,          DESC_PREFIX "Unload Code Caches")          \
   f(CNT_PREFIX ## CLDUnlink,                DESC_PREFIX "Unlink CLDs")                 \
-  f(CNT_PREFIX ## StringDedupTableRoots,    DESC_PREFIX "Dedup Table Roots")           \
-  f(CNT_PREFIX ## StringDedupQueueRoots,    DESC_PREFIX "Dedup Queue Roots")           \
   f(CNT_PREFIX ## WeakRefProc,              DESC_PREFIX "Weak References")             \
   f(CNT_PREFIX ## ParallelMark,             DESC_PREFIX "Parallel Mark")               \
   // end
@@ -59,6 +57,7 @@ class outputStream;
   f(conc_mark_roots,                                "Concurrent Mark Roots ")          \
   SHENANDOAH_PAR_PHASE_DO(conc_mark_roots,          "  CMR: ", f)                      \
   f(conc_mark,                                      "Concurrent Marking")              \
+  f(conc_mark_satb_flush,                           "  Flush SATB")                    \
                                                                                        \
   f(final_mark_gross,                               "Pause Final Mark (G)")            \
   f(final_mark,                                     "Pause Final Mark (N)")            \
@@ -96,11 +95,13 @@ class outputStream;
   f(conc_class_unload_purge_ec,                     "    Exception Caches")            \
   f(conc_strong_roots,                              "Concurrent Strong Roots")         \
   SHENANDOAH_PAR_PHASE_DO(conc_strong_roots_,       "  CSR: ", f)                      \
-  f(conc_rendezvous_roots,                          "Rendezvous")                      \
   f(conc_evac,                                      "Concurrent Evacuation")           \
                                                                                        \
-  f(init_update_refs_gross,                         "Pause Init  Update Refs (G)")     \
-  f(init_update_refs,                               "Pause Init  Update Refs (N)")     \
+  f(final_roots_gross,                              "Pause Final Roots (G)")           \
+  f(final_roots,                                    "Pause Final Roots (N)")           \
+                                                                                       \
+  f(init_update_refs_gross,                         "Pause Init Update Refs (G)")      \
+  f(init_update_refs,                               "Pause Init Update Refs (N)")      \
   f(init_update_refs_manage_gclabs,                 "  Manage GCLABs")                 \
                                                                                        \
   f(conc_update_refs,                               "Concurrent Update Refs")          \
@@ -216,13 +217,13 @@ private:
   ShenandoahWorkerData* worker_data(Phase phase, ParPhase par_phase);
   Phase worker_par_phase(Phase phase, ParPhase par_phase);
 
-  void set_cycle_data(Phase phase, double time);
+  void set_cycle_data(Phase phase, double time, bool should_aggregate = false);
   static double uninitialized() { return -1; }
 
 public:
   ShenandoahPhaseTimings(uint max_workers);
 
-  void record_phase_time(Phase phase, double time);
+  void record_phase_time(Phase phase, double time, bool should_aggregate = false);
 
   void record_workers_start(Phase phase);
   void record_workers_end(Phase phase);

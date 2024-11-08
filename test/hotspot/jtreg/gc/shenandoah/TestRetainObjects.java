@@ -23,7 +23,7 @@
  */
 
 /*
- * @test TestRetainObjects
+ * @test id=passive
  * @summary Acceptance tests: collector can deal with retained objects
  * @requires vm.gc.Shenandoah
  *
@@ -49,7 +49,7 @@
  */
 
 /*
- * @test TestRetainObjects
+ * @test id=aggressive
  * @summary Acceptance tests: collector can deal with retained objects
  * @requires vm.gc.Shenandoah
  *
@@ -69,7 +69,7 @@
  */
 
 /*
- * @test TestRetainObjects
+ * @test id=adaptive
  * @summary Acceptance tests: collector can deal with retained objects
  * @requires vm.gc.Shenandoah
  *
@@ -84,7 +84,7 @@
  */
 
 /*
- * @test TestRetainObjects
+ * @test id=static
  * @summary Acceptance tests: collector can deal with retained objects
  * @requires vm.gc.Shenandoah
  *
@@ -94,7 +94,7 @@
  */
 
 /*
- * @test TestRetainObjects
+ * @test id=compact
  * @summary Acceptance tests: collector can deal with retained objects
  * @requires vm.gc.Shenandoah
  *
@@ -104,48 +104,13 @@
  */
 
 /*
- * @test TestRetainObjects
+ * @test id=no-tlab
  * @summary Acceptance tests: collector can deal with retained objects
  * @requires vm.gc.Shenandoah
  *
  * @run main/othervm -Xmx1g -Xms1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
  *      -XX:+UseShenandoahGC
  *      -XX:-UseTLAB -XX:+ShenandoahVerify
- *      TestRetainObjects
- */
-
-/*
- * @test TestRetainObjects
- * @summary Acceptance tests: collector can deal with retained objects
- * @requires vm.gc.Shenandoah
- *
- * @run main/othervm -Xmx1g -Xms1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      -XX:+ShenandoahOOMDuringEvacALot
- *      TestRetainObjects
- *
- * @run main/othervm -Xmx1g -Xms1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      -XX:+ShenandoahAllocFailureALot
- *      TestRetainObjects
- *
- * @run main/othervm -Xmx1g -Xms1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      TestRetainObjects
- */
-
-/*
- * @test TestRetainObjects
- * @summary Acceptance tests: collector can deal with retained objects
- * @requires vm.gc.Shenandoah
- *
- * @run main/othervm -Xmx1g -Xms1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu
- *      -XX:+ShenandoahVerify
- *      TestRetainObjects
- *
- * @run main/othervm -Xmx1g -Xms1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu
  *      TestRetainObjects
  */
 

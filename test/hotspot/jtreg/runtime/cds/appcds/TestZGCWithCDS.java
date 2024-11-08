@@ -22,7 +22,8 @@
  */
 
 /*
- * @test 8232069 for ZGC
+ * @test
+ * @bug 8232069
  * @requires vm.cds
  * @requires vm.bits == 64
  * @requires vm.gc.Z

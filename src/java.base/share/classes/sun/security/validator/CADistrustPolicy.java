@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -53,6 +53,22 @@ enum CADistrustPolicy {
             }
             SymantecTLSPolicy.checkDistrust(chain);
         }
+    },
+
+    /**
+     * Distrust TLS Server certificates anchored by an Entrust root CA and
+     * issued after November 11, 2024. If enabled, this policy is currently
+     * enforced by the PKIX and SunX509 TrustManager implementations
+     * of the SunJSSE provider implementation.
+     */
+    ENTRUST_TLS {
+        void checkDistrust(String variant, X509Certificate[] chain)
+                           throws ValidatorException {
+            if (!variant.equals(Validator.VAR_TLS_SERVER)) {
+                return;
+            }
+            EntrustTLSPolicy.checkDistrust(chain);
+        }
     };
 
     /**
@@ -70,6 +86,7 @@ enum CADistrustPolicy {
     // The policies set in the jdk.security.caDistrustPolicies property.
     static final EnumSet<CADistrustPolicy> POLICIES = parseProperty();
     private static EnumSet<CADistrustPolicy> parseProperty() {
+        @SuppressWarnings("removal")
         String property = AccessController.doPrivileged(
             new PrivilegedAction<>() {
                 @Override

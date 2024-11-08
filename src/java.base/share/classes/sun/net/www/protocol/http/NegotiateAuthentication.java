@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,6 +30,7 @@ import java.io.IOException;
 import java.net.Authenticator.RequestorType;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.concurrent.locks.ReentrantLock;
 
 import sun.net.www.HeaderParser;
@@ -49,10 +50,9 @@ class NegotiateAuthentication extends AuthenticationInfo {
     @java.io.Serial
     private static final long serialVersionUID = 100L;
 
-    @SuppressWarnings("serial") // Not statically typed as Serializable
     private final HttpCallerInfo hci;
 
-    // These maps are used to manage the GSS availability for diffrent
+    // These maps are used to manage the GSS availability for different
     // hosts. The key for both maps is the host name.
     // <code>supported</code> is set when isSupported is checked,
     // if it's true, a cached Negotiator is put into <code>cache</code>.
@@ -70,7 +70,6 @@ class NegotiateAuthentication extends AuthenticationInfo {
     }
 
     // The HTTP Negotiate Helper
-    @SuppressWarnings("serial") // Not statically typed as Serializable
     private Negotiator negotiator = null;
 
    /**
@@ -80,9 +79,7 @@ class NegotiateAuthentication extends AuthenticationInfo {
     public NegotiateAuthentication(HttpCallerInfo hci) {
         super(RequestorType.PROXY==hci.authType ? PROXY_AUTHENTICATION : SERVER_AUTHENTICATION,
               hci.scheme.equalsIgnoreCase("Negotiate") ? NEGOTIATE : KERBEROS,
-              hci.url,
-              "",
-              AuthenticatorKeys.getKey(hci.authenticator));
+              hci.url, "");
         this.hci = hci;
     }
 
@@ -97,7 +94,7 @@ class NegotiateAuthentication extends AuthenticationInfo {
     /**
      * Find out if the HttpCallerInfo supports Negotiate protocol. In order to
      * find out yes or no, an initialization of a Negotiator object against it
-     * is tried. The generated object will be cached under the name of ths
+     * is tried. The generated object will be cached under the name of the
      * hostname at a success try.<br>
      *
      * If this method is called for the second time on an HttpCallerInfo with
@@ -112,7 +109,7 @@ class NegotiateAuthentication extends AuthenticationInfo {
                 supported = new HashMap<>();
             }
             String hostname = hci.host;
-            hostname = hostname.toLowerCase();
+            hostname = hostname.toLowerCase(Locale.ROOT);
             if (supported.containsKey(hostname)) {
                 return supported.get(hostname);
             }
@@ -153,7 +150,7 @@ class NegotiateAuthentication extends AuthenticationInfo {
 
     @Override
     protected boolean useAuthCache() {
-        return super.useAuthCache() && cacheSPNEGO;
+        return false;
     }
 
     /**
@@ -216,12 +213,9 @@ class NegotiateAuthentication extends AuthenticationInfo {
      */
     private byte[] firstToken() throws IOException {
         negotiator = null;
-        HashMap <String, Negotiator> cachedMap = getCache();
+        HashMap<String, Negotiator> cachedMap = getCache();
         if (cachedMap != null) {
-            negotiator = cachedMap.get(getHost());
-            if (negotiator != null) {
-                cachedMap.remove(getHost()); // so that it is only used once
-            }
+            negotiator = cachedMap.remove(getHost()); // so that it is only used once
         }
         if (negotiator == null) {
             negotiator = Negotiator.getNegotiator(hci);
@@ -243,6 +237,22 @@ class NegotiateAuthentication extends AuthenticationInfo {
      */
     private byte[] nextToken(byte[] token) throws IOException {
         return negotiator.nextToken(token);
+    }
+
+    /**
+     * Releases any system resources and cryptographic information stored in
+     * the context object and invalidates the context.
+     */
+    @Override
+    public void disposeContext() {
+        if (negotiator != null) {
+            try {
+                negotiator.disposeContext();
+            } catch (IOException ioEx) {
+                //do not rethrow IOException
+            }
+            negotiator = null;
+        }
     }
 
     // MS will send a final WWW-Authenticate even if the status is already

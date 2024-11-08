@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,12 +23,11 @@
 
 package gc.shenandoah;
 
-/* @test
+/* @test id=satb
  * @requires vm.gc.Shenandoah
  * @library /test/lib
- * @build sun.hotspot.WhiteBox
- * @modules java.base
- * @run driver jdk.test.lib.helpers.ClassFileInstaller sun.hotspot.WhiteBox
+ * @build jdk.test.whitebox.WhiteBox
+ * @run driver jdk.test.lib.helpers.ClassFileInstaller jdk.test.whitebox.WhiteBox
  * @run main/othervm
  *      -Xbootclasspath/a:.
  *      -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI
@@ -36,16 +35,16 @@ package gc.shenandoah;
  *      gc.shenandoah.TestReferenceRefersToShenandoah
  */
 
-/* @test
+/* @test id=satb-100
  * @requires vm.gc.Shenandoah
  * @library /test/lib
- * @build sun.hotspot.WhiteBox
+ * @build jdk.test.whitebox.WhiteBox
  * @modules java.base
- * @run driver jdk.test.lib.helpers.ClassFileInstaller sun.hotspot.WhiteBox
+ * @run main jdk.test.lib.helpers.ClassFileInstaller jdk.test.whitebox.WhiteBox
  * @run main/othervm
  *      -Xbootclasspath/a:.
  *      -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI
- *      -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu
+ *      -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -XX:ShenandoahGCMode=satb -XX:ShenandoahGarbageThreshold=100 -Xmx100m
  *      gc.shenandoah.TestReferenceRefersToShenandoah
  */
 
@@ -53,7 +52,7 @@ import java.lang.ref.PhantomReference;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
-import sun.hotspot.WhiteBox;
+import jdk.test.whitebox.WhiteBox;
 
 public class TestReferenceRefersToShenandoah {
     private static final WhiteBox WB = WhiteBox.getWhiteBox();
@@ -176,10 +175,6 @@ public class TestReferenceRefersToShenandoah {
         testObject4 = null;
     }
 
-    private static boolean isShenandoahIUMode() {
-        return "iu".equals(WB.getStringVMFlag("ShenandoahGCMode"));
-    }
-
     private static void testConcurrentCollection() throws Exception {
         progress("setup concurrent collection test");
         setup();
@@ -215,14 +210,7 @@ public class TestReferenceRefersToShenandoah {
             expectCleared(testPhantom1, "testPhantom1");
             expectCleared(testWeak2, "testWeak2");
             expectValue(testWeak3, testObject3, "testWeak3");
-            // This is true for all currently supported concurrent collectors,
-            // except Shenandoah+IU, which allows clearing refs even when
-            // accessed during concurrent marking.
-            if (isShenandoahIUMode()) {
-              expectCleared(testWeak4, "testWeak4");
-            } else {
-              expectNotCleared(testWeak4, "testWeak4");
-            }
+            expectNotCleared(testWeak4, "testWeak4");
 
             progress("verify get returns expected values");
             if (testWeak2.get() != null) {
@@ -237,12 +225,10 @@ public class TestReferenceRefersToShenandoah {
             }
 
             TestObject obj4 = testWeak4.get();
-            if (!isShenandoahIUMode()) {
-                if (obj4 == null) {
-                    fail("testWeak4.get() returned null");
-                } else if (obj4.value != 4) {
-                    fail("testWeak4.get().value is " + obj4.value);
-                }
+            if (obj4 == null) {
+                fail("testWeak4.get() returned null");
+            } else if (obj4.value != 4) {
+                fail("testWeak4.get().value is " + obj4.value);
             }
 
             progress("verify queue entries");

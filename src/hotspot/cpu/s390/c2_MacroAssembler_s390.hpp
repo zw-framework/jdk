@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2017, 2024 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,6 +29,10 @@
 // C2_MacroAssembler contains high-level macros for C2
 
  public:
+  // Code used by cmpFastLockLightweight and cmpFastUnlockLightweight mach instructions in s390.ad file.
+  void fast_lock_lightweight(Register obj, Register box, Register temp1, Register temp2);
+  void fast_unlock_lightweight(Register obj, Register box, Register temp1, Register temp2);
+
   //-------------------------------------------
   // Special String Intrinsics Implementation.
   //-------------------------------------------
@@ -38,7 +43,7 @@
   //   Early clobber: result.
   //   Boolean precise controls accuracy of result value.
   unsigned int string_compress(Register result, Register src, Register dst, Register cnt,
-                               Register tmp,    bool precise);
+                               Register tmp,    bool precise, bool toASCII);
 
   // Inflate byte[] to char[].
   unsigned int string_inflate_trot(Register src, Register dst, Register cnt, Register tmp);
@@ -56,9 +61,7 @@
   //   len is signed int. Counts # characters, not bytes.
   unsigned int string_inflate_const(Register src, Register dst, Register tmp, int len);
 
-  // Kills src.
-  unsigned int has_negatives(Register result, Register src, Register cnt,
-                             Register odd_reg, Register even_reg, Register tmp);
+  unsigned int count_positives(Register result, Register src, Register cnt, Register tmp);
 
   unsigned int string_compare(Register str1, Register str2, Register cnt1, Register cnt2,
                               Register odd_reg, Register even_reg, Register result, int ae);

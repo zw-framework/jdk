@@ -26,7 +26,7 @@
  * @test
  * @summary Out of memory When dumping the CDS archive
  * @library /test/lib /test/hotspot/jtreg/runtime/cds/appcds /test/hotspot/jtreg/runtime/cds/appcds/test-classes
- * @requires vm.cds.archived.java.heap
+ * @requires vm.cds.write.archived.java.heap
  * @requires vm.jvmti
  * @run driver ExceptionDuringDumpAtObjectsInitPhase
  */
@@ -68,8 +68,8 @@ public class ExceptionDuringDumpAtObjectsInitPhase {
                         "-Xmx32m",
                         "-Dtest.with.exception=true",
                         gcLog).shouldNotHaveExitValue(0)
-                              .shouldContain("Preload Error: Failed to load jdk/internal/math/FDBigInteger")
-                              .shouldContain("VM exits due to exception, use -Xlog:cds,exceptions=trace for detail");
+                              .shouldContain("Preload Warning: Cannot find jdk/internal/math/FDBigInteger")
+                              .shouldContain("Unexpected exception, use -Xlog:cds,exceptions=trace for detail");
 
         // 2. Test with OOM
         System.out.println("2. OOM during dump");

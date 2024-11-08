@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,6 +28,8 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 
+import jdk.internal.constant.DirectMethodHandleDescImpl;
+
 import static java.lang.constant.ConstantDescs.CD_void;
 import static java.lang.constant.DirectMethodHandleDesc.Kind.CONSTRUCTOR;
 
@@ -35,15 +37,13 @@ import static java.lang.constant.DirectMethodHandleDesc.Kind.CONSTRUCTOR;
  * A <a href="package-summary.html#nominal">nominal descriptor</a> for a
  * {@link MethodHandle} constant.
  *
- * @apiNote In the future, if the Java language permits, {@linkplain MethodHandleDesc}
- * may become a {@code sealed} interface, which would prohibit subclassing except
- * by explicitly permitted types.  Non-platform classes should not implement
- * {@linkplain MethodHandleDesc} directly.
- *
+ * @sealedGraph
  * @since 12
  */
-public interface MethodHandleDesc
-        extends ConstantDesc {
+public sealed interface MethodHandleDesc
+        extends ConstantDesc
+        permits AsTypeMethodHandleDesc,
+                DirectMethodHandleDesc {
 
     /**
      * Creates a {@linkplain MethodHandleDesc} corresponding to an invocation of a
@@ -159,15 +159,13 @@ public interface MethodHandleDesc
                                           ClassDesc owner,
                                           String fieldName,
                                           ClassDesc fieldType) {
-        MethodTypeDesc mtr;
-        switch (kind) {
-            case GETTER: mtr = MethodTypeDesc.of(fieldType, owner); break;
-            case SETTER: mtr = MethodTypeDesc.of(CD_void, owner, fieldType); break;
-            case STATIC_GETTER: mtr = MethodTypeDesc.of(fieldType); break;
-            case STATIC_SETTER: mtr = MethodTypeDesc.of(CD_void, fieldType); break;
-            default:
-                throw new IllegalArgumentException(kind.toString());
-        }
+        MethodTypeDesc mtr = switch (kind) {
+            case GETTER        -> MethodTypeDesc.of(fieldType, owner);
+            case SETTER        -> MethodTypeDesc.of(CD_void, owner, fieldType);
+            case STATIC_GETTER -> MethodTypeDesc.of(fieldType);
+            case STATIC_SETTER -> MethodTypeDesc.of(CD_void, fieldType);
+            default -> throw new IllegalArgumentException(kind.toString());
+        };
         return new DirectMethodHandleDescImpl(kind, owner, fieldName, mtr);
     }
 
@@ -208,6 +206,12 @@ public interface MethodHandleDesc
      * @return a {@linkplain MethodHandleDesc} describing the method handle type
      */
     MethodTypeDesc invocationType();
+
+    /**
+     * @since 21
+     */
+    @Override
+    MethodHandle resolveConstantDesc(MethodHandles.Lookup lookup) throws ReflectiveOperationException;
 
     /**
      * Compares the specified object with this descriptor for equality.  Returns

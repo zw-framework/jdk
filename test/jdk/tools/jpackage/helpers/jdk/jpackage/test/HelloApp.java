@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2019, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -56,6 +56,8 @@ public final class HelloApp {
     }
 
     private JarBuilder prepareSources(Path srcDir) throws IOException {
+        final String srcClassName = appDesc.srcClassName();
+
         final String qualifiedClassName = appDesc.className();
 
         final String className = qualifiedClassName.substring(
@@ -83,9 +85,9 @@ public final class HelloApp {
         // Add package directive and replace class name in java source file.
         // Works with simple test Hello.java.
         // Don't expect too much from these regexps!
-        Pattern classNameRegex = Pattern.compile("\\bHello\\b");
+        Pattern classNameRegex = Pattern.compile("\\b" + srcClassName + "\\b");
         Pattern classDeclaration = Pattern.compile(
-                "(^.*\\bclass\\s+)\\bHello\\b(.*$)");
+                "(^.*\\bclass\\s+)\\b" + srcClassName + "\\b(.*$)");
         Pattern importDirective = Pattern.compile(
                 "(?<=import (?:static )?+)[^;]+");
         AtomicBoolean classDeclared = new AtomicBoolean();
@@ -97,7 +99,8 @@ public final class HelloApp {
                     System.lineSeparator(), line);
         });
 
-        Files.write(srcFile, Files.readAllLines(HELLO_JAVA).stream().map(line -> {
+        Files.write(srcFile,
+                Files.readAllLines(appDesc.srcJavaPath()).stream().map(line -> {
             Matcher m;
             if (classDeclared.getPlain()) {
                 if ((m = classNameRegex.matcher(line)).find()) {
@@ -144,13 +147,14 @@ public final class HelloApp {
             return cmd.getArgumentValue("--module-path", cmd::inputDir, Path::of);
         };
 
-        if (moduleName == null && CLASS_NAME.equals(qualifiedClassName)) {
+        if (moduleName == null && CLASS_NAME.equals(qualifiedClassName)
+                && HELLO_JAVA.equals(appDesc.srcJavaPath())) {
             // Use Hello.java as is.
             cmd.addPrerequisiteAction((self) -> {
                 if (self.inputDir() != null) {
                     Path jarFile = self.inputDir().resolve(appDesc.jarFileName());
                     createJarBuilder().setOutputJar(jarFile).addSourceFile(
-                            HELLO_JAVA).create();
+                            appDesc.srcJavaPath()).create();
                 }
             });
         } else if (appDesc.jmodFileName() != null) {
@@ -159,7 +163,7 @@ public final class HelloApp {
                 createBundle(appDesc, getModulePath.get());
             });
         } else {
-            // Modular app in .jar file
+            // Modular/non-modular app in .jar file
             cmd.addPrerequisiteAction(unused -> {
                 final Path jarFile;
                 if (moduleName == null) {
@@ -195,7 +199,7 @@ public final class HelloApp {
     }
 
     static JavaAppDesc createDefaltAppDesc() {
-        return new JavaAppDesc().setClassName(CLASS_NAME).setBundleFileName("hello.jar");
+        return new JavaAppDesc().setSrcJavaPath(HELLO_JAVA).setClassName(CLASS_NAME).setBundleFileName("hello.jar");
     }
 
     static void verifyOutputFile(Path outputFile, List<String> args,
@@ -313,20 +317,23 @@ public final class HelloApp {
 
     public static void executeLauncherAndVerifyOutput(JPackageCommand cmd,
             String... args) {
-        AppOutputVerifier av = getVerifier(cmd, args);
+        AppOutputVerifier av = assertMainLauncher(cmd, args);
         if (av != null) {
-            // when running app launchers, clear users environment
-            av.executeAndVerifyOutput(true, args);
+            av.executeAndVerifyOutput(args);
         }
     }
 
     public static Executor.Result executeLauncher(JPackageCommand cmd,
             String... args) {
-        AppOutputVerifier av = getVerifier(cmd, args);
-        return av.executeOnly(true, args);
+        AppOutputVerifier av = assertMainLauncher(cmd, args);
+        if (av != null) {
+            return av.saveOutput(true).execute(args);
+        } else {
+            return null;
+        }
     }
 
-    private static AppOutputVerifier getVerifier(JPackageCommand cmd,
+    public static AppOutputVerifier assertMainLauncher(JPackageCommand cmd,
             String... args) {
         final Path launcherPath = cmd.appLauncherPath();
         if (!cmd.canRunLauncher(String.format("Not running [%s] launcher",
@@ -347,8 +354,29 @@ public final class HelloApp {
     public final static class AppOutputVerifier {
         AppOutputVerifier(Path helloAppLauncher) {
             this.launcherPath = helloAppLauncher;
+            this.outputFilePath = TKit.workDir().resolve(OUTPUT_FILENAME);
             this.params = new HashMap<>();
             this.defaultLauncherArgs = new ArrayList<>();
+
+            if (TKit.isWindows()) {
+                // When running app launchers on Windows, clear users environment (JDK-8254920)
+                removePath(true);
+            }
+        }
+
+        public AppOutputVerifier removePath(boolean v) {
+            removePath = v;
+            return this;
+        }
+
+        public AppOutputVerifier saveOutput(boolean v) {
+            saveOutput = v;
+            return this;
+        }
+
+        public AppOutputVerifier expectedExitCode(int v) {
+            expectedExitCode = v;
+            return this;
         }
 
         public AppOutputVerifier addDefaultArguments(String... v) {
@@ -363,6 +391,12 @@ public final class HelloApp {
         public AppOutputVerifier addParam(String name, String value) {
             if (name.startsWith("param")) {
                 params.put(name, value);
+            } else if ("jpackage.test.appOutput".equals(name)) {
+                outputFilePath = Path.of(value);
+            } else if ("jpackage.test.exitCode".equals(name)) {
+                expectedExitCode = Integer.parseInt(value);
+            } else if ("jpackage.test.noexit".equals(name)) {
+                launcherNoExit = Boolean.parseBoolean(value);
             }
             return this;
         }
@@ -393,19 +427,7 @@ public final class HelloApp {
             .collect(Collectors.toList()));
         }
 
-        public void executeAndVerifyOutput(String... args) {
-            executeAndVerifyOutput(false, args);
-        }
-
-        public void executeAndVerifyOutput(boolean removePath,
-                List<String> launcherArgs, List<String> appArgs) {
-            getExecutor(launcherArgs.toArray(new String[0])).dumpOutput()
-                    .setRemovePath(removePath).execute();
-            Path outputFile = TKit.workDir().resolve(OUTPUT_FILENAME);
-            verifyOutputFile(outputFile, appArgs, params);
-        }
-
-        public void executeAndVerifyOutput(boolean removePath, String... args) {
+        public void verifyOutput(String... args) {
             final List<String> launcherArgs = List.of(args);
             final List<String> appArgs;
             if (launcherArgs.isEmpty()) {
@@ -414,14 +436,23 @@ public final class HelloApp {
                 appArgs = launcherArgs;
             }
 
-            executeAndVerifyOutput(removePath, launcherArgs, appArgs);
+            verifyOutputFile(outputFilePath, appArgs, params);
         }
 
-        public Executor.Result executeOnly(boolean removePath, String...args) {
-            return getExecutor(args)
-                    .saveOutput()
-                    .setRemovePath(removePath)
-                    .executeWithoutExitCodeCheck();
+        public void executeAndVerifyOutput(String... args) {
+            execute(args);
+            verifyOutput(args);
+        }
+
+        public Executor.Result execute(String... args) {
+            if (launcherNoExit) {
+                return getExecutor(args).executeWithoutExitCodeCheck();
+            } else {
+                final int attempts = 3;
+                final int waitBetweenAttemptsSeconds = 5;
+                return getExecutor(args).executeAndRepeatUntilExitCode(expectedExitCode, attempts,
+                        waitBetweenAttemptsSeconds);
+            }
         }
 
         private Executor getExecutor(String...args) {
@@ -441,11 +472,19 @@ public final class HelloApp {
             final List<String> launcherArgs = List.of(args);
             return new Executor()
                     .setDirectory(outputFile.getParent())
+                    .saveOutput(saveOutput)
+                    .dumpOutput()
+                    .setRemovePath(removePath)
                     .setExecutable(executablePath)
                     .addArguments(launcherArgs);
         }
 
+        private boolean launcherNoExit;
+        private boolean removePath;
+        private boolean saveOutput;
         private final Path launcherPath;
+        private Path outputFilePath;
+        private int expectedExitCode;
         private final List<String> defaultLauncherArgs;
         private final Map<String, String> params;
     }
@@ -459,7 +498,7 @@ public final class HelloApp {
     private final JavaAppDesc appDesc;
 
     private static final Path HELLO_JAVA = TKit.TEST_SRC_ROOT.resolve(
-            "apps/image/Hello.java");
+            "apps/Hello.java");
 
     private final static String CLASS_NAME = HELLO_JAVA.getFileName().toString().split(
             "\\.", 2)[0];

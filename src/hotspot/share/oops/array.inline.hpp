@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,16 +25,16 @@
 #ifndef SHARE_OOPS_ARRAY_INLINE_HPP
 #define SHARE_OOPS_ARRAY_INLINE_HPP
 
-#include "memory/allocation.hpp"
-#include "memory/metaspace.hpp"
 #include "oops/array.hpp"
 
+#include "memory/allocation.hpp"
+#include "memory/metaspace.hpp"
 
 template <typename T>
 inline void* Array<T>::operator new(size_t size, ClassLoaderData* loader_data, int length, TRAPS) throw() {
   size_t word_size = Array::size(length);
   return (void*) Metaspace::allocate(loader_data, word_size,
-                                     MetaspaceObj::array_type(sizeof(T)), THREAD);
+                                     MetaspaceObj::array_type(sizeof(T)), false, THREAD);
 }
 
 #endif // SHARE_OOPS_ARRAY_INLINE_HPP

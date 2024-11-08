@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -34,18 +34,32 @@ class JfrSignal {
   JfrSignal() : _signaled(false) {}
 
   void signal() const {
-    if (!Atomic::load_acquire(&_signaled)) {
-      Atomic::release_store(&_signaled, true);
-    }
+    Atomic::release_store(&_signaled, true);
+  }
+
+  void reset() const {
+    Atomic::release_store(&_signaled, false);
   }
 
   bool is_signaled() const {
-    if (Atomic::load_acquire(&_signaled)) {
-      Atomic::release_store(&_signaled, false); // auto-reset
+    return Atomic::load_acquire(&_signaled);
+  }
+
+  void signal_if_not_set() const {
+    if (!is_signaled()) {
+      signal();
+    }
+  }
+
+  bool is_signaled_with_reset() const {
+    if (is_signaled()) {
+      reset();
       return true;
     }
     return false;
   }
+
+  address signaled_address() { return (address)&_signaled; }
 };
 
 #endif // SHARE_JFR_UTILITIES_JFRSIGNAL_HPP

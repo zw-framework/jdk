@@ -23,11 +23,10 @@
  */
 
 /*
- * @test TestWrongArrayMember
+ * @test
  * @requires vm.gc.Shenandoah
  *
- * @run main/othervm -Xmx128m -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC                         TestWrongArrayMember
- * @run main/othervm -Xmx128m -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu TestWrongArrayMember
+ * @run main/othervm -Xmx128m -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC TestWrongArrayMember
  */
 
 public class TestWrongArrayMember {
@@ -54,4 +53,3 @@ public class TestWrongArrayMember {
         }
     }
 }
-

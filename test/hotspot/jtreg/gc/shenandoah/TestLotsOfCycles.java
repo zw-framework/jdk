@@ -23,7 +23,7 @@
  */
 
 /*
- * @test TestLotsOfCycles
+ * @test id=passive
  * @requires vm.gc.Shenandoah
  *
  * @run main/othervm/timeout=480 -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
@@ -40,7 +40,7 @@
  */
 
 /*
- * @test TestLotsOfCycles
+ * @test id=aggressive
  * @requires vm.gc.Shenandoah
  *
  * @run main/othervm/timeout=480 -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
@@ -62,7 +62,7 @@
  */
 
 /*
- * @test TestLotsOfCycles
+ * @test id=adaptive
  * @requires vm.gc.Shenandoah
  *
  * @run main/othervm/timeout=480 -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
@@ -72,7 +72,7 @@
  */
 
 /*
- * @test TestLotsOfCycles
+ * @test id=static
  * @requires vm.gc.Shenandoah
  *
  * @run main/othervm/timeout=480 -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
@@ -82,45 +82,13 @@
  */
 
 /*
- * @test TestLotsOfCycles
+ * @test id=compact
  * @requires vm.gc.Shenandoah
  *
  * @run main/othervm/timeout=480 -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
  *      -XX:+UseShenandoahGC -XX:ShenandoahGCHeuristics=compact
  *      -Dtarget=1000
  *     TestLotsOfCycles
- */
-
-/*
- * @test TestLotsOfCycles
- * @requires vm.gc.Shenandoah
- *
- * @run main/othervm/timeout=480 -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      -XX:+ShenandoahOOMDuringEvacALot
- *      -Dtarget=1000
- *      TestLotsOfCycles
- *
- * @run main/othervm/timeout=480 -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      -XX:+ShenandoahAllocFailureALot
- *      -Dtarget=1000
- *      TestLotsOfCycles
- *
- * @run main/othervm/timeout=480 -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      -Dtarget=1000
- *      TestLotsOfCycles
- */
-
-/*
- * @test TestLotsOfCycles
- * @requires vm.gc.Shenandoah
- *
- * @run main/othervm/timeout=480 -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu
- *      -Dtarget=10000
- *      TestLotsOfCycles
  */
 
 public class TestLotsOfCycles {

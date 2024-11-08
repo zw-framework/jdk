@@ -39,7 +39,7 @@ class ShenandoahHeap;
 
 class ShenandoahVerifierTask {
 public:
-  ShenandoahVerifierTask(oop o = NULL, int idx = 0): _obj(o) { }
+  ShenandoahVerifierTask(oop o = nullptr, int idx = 0): _obj(o) { }
   ShenandoahVerifierTask(oop o, size_t idx): _obj(o) { }
   // Trivially copyable.
 
@@ -129,11 +129,11 @@ public:
     // Nothing is in progress, no forwarded objects
     _verify_gcstate_stable,
 
-    // Nothing is in progress, some objects are forwarded
-    _verify_gcstate_forwarded,
+    // Nothing is in progress, no forwarded objects, weak roots handling
+    _verify_gcstate_stable_weakroots,
 
-    // Evacuation is in progress, some objects are forwarded
-    _verify_gcstate_evacuation
+    // Nothing is in progress, some objects are forwarded
+    _verify_gcstate_forwarded
   } VerifyGCState;
 
   struct VerifyOptions {
@@ -172,8 +172,6 @@ public:
   void verify_before_concmark();
   void verify_after_concmark();
   void verify_before_evacuation();
-  void verify_during_evacuation();
-  void verify_after_evacuation();
   void verify_before_updaterefs();
   void verify_after_updaterefs();
   void verify_before_fullgc();

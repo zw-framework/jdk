@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2024, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012, 2015 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -23,34 +23,26 @@
  *
  */
 
-// no precompiled headers
-
-#include "memory/allocation.inline.hpp"
-#include "runtime/handles.inline.hpp"
-#include "runtime/mutexLocker.hpp"
-#include "runtime/os.hpp"
+#include "precompiled.hpp"
+#include "memory/allocation.hpp"
+#include "runtime/mutex.hpp"
 #include "runtime/osThread.hpp"
-#include "runtime/safepoint.hpp"
-#include "runtime/vmThread.hpp"
 
-void OSThread::pd_initialize() {
-  assert(this != NULL, "check");
-  _thread_id        = 0;
-  _kernel_thread_id = 0;
-  _siginfo = NULL;
-  _ucontext = NULL;
-  _expanding_stack = 0;
-  _alt_sig_stack = NULL;
+#include <signal.h>
 
-  _last_cpu_times.sys = _last_cpu_times.user = 0L;
-
+OSThread::OSThread()
+  : _thread_id(0),
+    _kernel_thread_id(0),
+    _caller_sigmask(),
+    sr(),
+    _siginfo(nullptr),
+    _ucontext(nullptr),
+    _expanding_stack(0),
+    _alt_sig_stack(nullptr),
+    _startThread_lock(new Monitor(Mutex::event, "startThread_lock")) {
   sigemptyset(&_caller_sigmask);
-
-  _startThread_lock = new Monitor(Mutex::event, "startThread_lock", true,
-                                  Monitor::_safepoint_check_never);
-  assert(_startThread_lock != NULL, "check");
 }
 
-void OSThread::pd_destroy() {
+OSThread::~OSThread() {
   delete _startThread_lock;
 }

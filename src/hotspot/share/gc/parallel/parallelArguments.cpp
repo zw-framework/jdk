@@ -79,11 +79,8 @@ void ParallelArguments::initialize() {
     }
   }
 
-  // Par compact uses lower default values since they are treated as
-  // minimums.  These are different defaults because of the different
-  // interpretation and are not ergonomically set.
-  if (FLAG_IS_DEFAULT(MarkSweepDeadRatio)) {
-    FLAG_SET_DEFAULT(MarkSweepDeadRatio, 1);
+  if (FLAG_IS_DEFAULT(ParallelRefProcEnabled) && ParallelGCThreads > 1) {
+    FLAG_SET_DEFAULT(ParallelRefProcEnabled, true);
   }
 }
 
@@ -93,6 +90,8 @@ static size_t default_gen_alignment() {
 }
 
 void ParallelArguments::initialize_alignments() {
+  // Initialize card size before initializing alignments
+  CardTable::initialize_card_size();
   SpaceAlignment = GenAlignment = default_gen_alignment();
   HeapAlignment = compute_heap_alignment();
 }
@@ -131,10 +130,6 @@ void ParallelArguments::initialize_heap_flags_and_sizes() {
 }
 
 size_t ParallelArguments::heap_reserved_size_bytes() {
-  return MaxHeapSize;
-}
-
-size_t ParallelArguments::heap_max_size_bytes() {
   return MaxHeapSize;
 }
 

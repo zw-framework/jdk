@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,6 +29,7 @@
 #include "opto/optoreg.hpp"
 #include "utilities/count_leading_zeros.hpp"
 #include "utilities/count_trailing_zeros.hpp"
+#include "utilities/globalDefinitions.hpp"
 
 class LRG;
 
@@ -99,12 +100,13 @@ class RegMask {
   // requirement is internal to the allocator, and independent of any
   // particular platform.
   enum { SlotsPerLong = 2,
-         SlotsPerVecA = 8,
+         SlotsPerVecA = 4,
          SlotsPerVecS = 1,
          SlotsPerVecD = 2,
          SlotsPerVecX = 4,
          SlotsPerVecY = 8,
          SlotsPerVecZ = 16,
+         SlotsPerRegVectMask = X86_ONLY(2) NOT_X86(1)
          };
 
   // A constructor only used by the ADLC output.  All mask fields are filled
@@ -356,17 +358,17 @@ class RegMask {
 #endif
 
   static const RegMask Empty;   // Common empty mask
+  static const RegMask All;     // Common all mask
 
-  static bool can_represent(OptoReg::Name reg) {
-    // NOTE: -1 in computation reflects the usage of the last
-    //       bit of the regmask as an infinite stack flag and
-    //       -7 is to keep mask aligned for largest value (VecZ).
-    return (int)reg < (int)(CHUNK_SIZE - 1);
+  static bool can_represent(OptoReg::Name reg, unsigned int size = 1) {
+    // NOTE: MAX2(1U,size) in computation reflects the usage of the last
+    //       bit of the regmask as an infinite stack flag.
+    return (int)reg < (int)(CHUNK_SIZE - MAX2(1U,size));
   }
   static bool can_represent_arg(OptoReg::Name reg) {
-    // NOTE: -SlotsPerVecZ in computation reflects the need
+    // NOTE: SlotsPerVecZ in computation reflects the need
     //       to keep mask aligned for largest value (VecZ).
-    return (int)reg < (int)(CHUNK_SIZE - SlotsPerVecZ);
+    return can_represent(reg, SlotsPerVecZ);
   }
 };
 

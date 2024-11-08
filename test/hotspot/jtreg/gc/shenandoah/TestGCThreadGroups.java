@@ -23,7 +23,7 @@
  */
 
 /**
- * @test TestGCThreadGroups
+ * @test id=passive
  * @summary Test Shenandoah GC uses concurrent/parallel threads correctly
  * @requires vm.gc.Shenandoah
  *
@@ -35,7 +35,7 @@
  */
 
 /**
- * @test TestGCThreadGroups
+ * @test id=default
  * @summary Test Shenandoah GC uses concurrent/parallel threads correctly
  * @requires vm.gc.Shenandoah
  *
@@ -75,24 +75,6 @@
  *      -Dtarget=100
  *      TestGCThreadGroups
  */
-
-/**
- * @test TestGCThreadGroups
- * @summary Test Shenandoah GC uses concurrent/parallel threads correctly
- * @requires vm.gc.Shenandoah
- *
- * @run main/othervm -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu
- *      -XX:ConcGCThreads=2 -XX:ParallelGCThreads=4
- *      -Dtarget=1000
- *      TestGCThreadGroups
- *
- * @run main/othervm -Xmx16m -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      -XX:ConcGCThreads=2 -XX:ParallelGCThreads=4
- *      -Dtarget=1000
- *      TestGCThreadGroups
-*/
 
 public class TestGCThreadGroups {
 

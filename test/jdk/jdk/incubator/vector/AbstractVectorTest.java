@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,11 +35,13 @@ import java.util.function.IntUnaryOperator;
 import java.util.stream.Stream;
 import java.util.stream.Collectors;
 
+import jdk.test.lib.Utils;
+
 import org.testng.Assert;
 
 public class AbstractVectorTest {
 
-    static final Random RAND = new Random(Integer.getInteger("jdk.incubator.vector.test.random-seed", 1337));
+    static final Random RAND = Utils.getRandomInstance();
 
     interface ToBoolF {
         boolean apply(int i);
@@ -84,20 +86,6 @@ public class AbstractVectorTest {
         };
     }
 
-    static final Collection<ByteOrder> BYTE_ORDER_VALUES = Set.of(
-            ByteOrder.BIG_ENDIAN, ByteOrder.LITTLE_ENDIAN);
-
-    static final List<IntFunction<ByteBuffer>> BYTE_BUFFER_GENERATORS = List.of(
-            withToString("HB:RW:NE", (int s) -> {
-                return ByteBuffer.allocate(s)
-                        .order(ByteOrder.nativeOrder());
-            }),
-            withToString("DB:RW:NE", (int s) -> {
-                return ByteBuffer.allocateDirect(s)
-                        .order(ByteOrder.nativeOrder());
-            })
-    );
-
     static final List<IntFunction<boolean[]>> BOOL_ARRAY_GENERATORS = List.of(
             withToString("boolean[i % 2]", (int s) -> {
                 return fill_boolean(s,
@@ -106,20 +94,6 @@ public class AbstractVectorTest {
             withToString("boolean[i % 5]", (int s) -> {
                 return fill_boolean(s,
                             i -> ((i % 5) == 0));
-            })
-    );
-    static final List<IntFunction<int[]>> INDEX_GENERATORS = List.of(
-            withToString("index[i -> i]", (int s) -> {
-                return fillInts(s,
-                                i -> i);
-            }),
-            withToString("index[i -> size - i - 1]", (int s) -> {
-                return fillInts(s,
-                                i -> s - i - 1);
-            }),
-            withToString("index[i -> (i % 2) == 0 ? i : s - i - 1]", (int s) -> {
-                return fillInts(s,
-                                i -> (i % 2) == 0 ? i : s - i - 1);
             })
     );
 
@@ -161,9 +135,8 @@ public class AbstractVectorTest {
                                       fb -> List.of(fa, fb))).collect(Collectors.toList());
 
     static final List<BiFunction<Integer,Integer,int[]>> INT_SHUFFLE_GENERATORS = List.of(
-            withToStringBi("shuffle[random]", (Integer l, Integer m) -> {
-                return RAND.ints(l, 0, m).toArray();
-            })
+            withToStringBi("shuffle[random]",
+                    (Integer l, Integer m) -> RAND.ints(l, 0, m).toArray())
     );
 
     interface RangeIntOp {
@@ -202,16 +175,9 @@ public class AbstractVectorTest {
     );
 
     static final List<BiFunction<Integer,Integer,int[]>> INT_INDEX_GENERATORS = List.of(
-            withToStringBi("index[random]", (Integer l, Integer m) -> {
-                return RAND.ints(l, 0, m).toArray();
-            })
+            withToStringBi("index[random]",
+                    (Integer l, Integer m) -> RAND.ints(l, 0, m).toArray())
     );
-
-    static int countTrailingFalse(boolean[] m) {
-        int i;
-        for (i = m.length - 1; i >= 0 && !m[i]; i--);
-        return m.length - 1 - i;
-    }
 
     static boolean isIndexOutOfBoundsForMask(boolean[] mask, int offset, int length) {
         return isIndexOutOfBoundsForMask(mask, offset, length, 1);

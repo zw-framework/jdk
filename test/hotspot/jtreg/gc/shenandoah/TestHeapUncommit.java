@@ -23,7 +23,7 @@
  */
 
 /*
- * @test TestHeapUncommit
+ * @test id=passive
  * @summary Acceptance tests: collector can withstand allocation
  * @key randomness
  * @requires vm.gc.Shenandoah
@@ -51,7 +51,7 @@
  */
 
 /*
- * @test TestHeapUncommit
+ * @test id=adaptive
  * @summary Acceptance tests: collector can withstand allocation
  * @key randomness
  * @requires vm.gc.Shenandoah
@@ -85,28 +85,7 @@
  */
 
 /*
- * @test TestHeapUncommit
- * @summary Acceptance tests: collector can withstand allocation
- * @key randomness
- * @requires vm.gc.Shenandoah
- * @library /test/lib
- *
- * @run main/othervm -Xmx1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+ShenandoahUncommit -XX:ShenandoahUncommitDelay=0
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu
- *      -XX:+ShenandoahVerify
- *      TestHeapUncommit
- *
- * @run main/othervm -Xmx1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+ShenandoahUncommit -XX:ShenandoahUncommitDelay=0
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu
- *      TestHeapUncommit
- *
- * @run main/othervm -Xmx1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+ShenandoahUncommit -XX:ShenandoahUncommitDelay=0
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
- *      TestHeapUncommit
- */
-
-/*
- * @test TestHeapUncommit
+ * @test id=default-lp
  * @key randomness
  * @requires vm.gc.Shenandoah
  * @requires vm.bits == "64"

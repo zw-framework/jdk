@@ -493,9 +493,6 @@ static StatusWindow *createStatusWindow(Window parent) {
     XWindowAttributes xwa;
     XWindowAttributes xxwa;
     /* Variable for XCreateFontSet()*/
-    char **mclr;
-    int  mccr = 0;
-    char *dsr;
     unsigned long bg, fg, light, dim;
     int x, y, off_x, off_y, xx, yy;
     unsigned int w, h, bw, depth;
@@ -992,7 +989,7 @@ createXIC(JNIEnv * env, X11InputMethodData *pX11IMData, Window w)
         pX11IMData->ic_passive = pX11IMData->ic_active;
     }
 
-    // The code set the IC mode that the preedit state is not initialied
+    // The code set the IC mode that the preedit state is not initialized
     // at XmbResetIC.  This attribute can be set at XCreateIC.  I separately
     // set the attribute to avoid the failure of XCreateIC at some platform
     // which does not support the attribute.

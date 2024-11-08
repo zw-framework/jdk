@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,7 +28,11 @@ package sun.security.ssl;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.Iterator;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSessionContext;
 
@@ -38,7 +42,7 @@ import sun.security.util.Cache;
 
 
 /**
- * @systemProperty jdk.tls.server.enableSessionTicketExtension} determines if the
+ * {@systemProperty jdk.tls.server.enableSessionTicketExtension} determines if the
  * server will provide stateless session tickets, if the client supports it,
  * as described in RFC 5077 and RFC 8446.  a stateless session ticket
  * contains the encrypted server's state which saves server resources.
@@ -47,7 +51,7 @@ import sun.security.util.Cache;
  * client will send an extension in the ClientHello in the pre-TLS 1.3.
  * This extension allows the client to accept the server's session state for
  * Server Side stateless resumption (RFC 5077).  Setting the property to
- * "true" turns this on, by default it is false.  For TLS 1.3, the system
+ * "false" turns this off, by default it is true.  For TLS 1.3, the system
  * property is not needed as this support is part of the spec.
  *
  * {@systemProperty jdk.tls.server.sessionTicketTimeout} determines how long
@@ -58,9 +62,10 @@ import sun.security.util.Cache;
  */
 
 final class SSLSessionContextImpl implements SSLSessionContext {
-    private final static int DEFAULT_MAX_CACHE_SIZE = 20480;
+    private static final int DEFAULT_MAX_CACHE_SIZE = 20480;
+    private static final int DEFAULT_MAX_QUEUE_SIZE = 10;
     // Default lifetime of a session. 24 hours
-    final static int DEFAULT_SESSION_TIMEOUT = 86400;
+    static final int DEFAULT_SESSION_TIMEOUT = 86400;
 
     private final Cache<SessionId, SSLSessionImpl> sessionCache;
                                         // session cache, session id as key
@@ -68,6 +73,11 @@ final class SSLSessionContextImpl implements SSLSessionContext {
                                         // session cache, "host:port" as key
     private int cacheLimit;             // the max cache size
     private int timeout;                // timeout in seconds
+
+    // The current session ticket encryption key ID (only used in server context)
+    private int currentKeyID;
+    // Session ticket encryption keys and IDs map (only used in server context)
+    private final Map<Integer, SessionTicketExtension.StatelessKey> keyHashMap;
 
     // Default setting for stateless session resumption support (RFC 5077)
     private boolean statelessSession = true;
@@ -78,8 +88,19 @@ final class SSLSessionContextImpl implements SSLSessionContext {
         cacheLimit = getDefaults(server);    // default cache size
 
         // use soft reference
-        sessionCache = Cache.newSoftMemoryCache(cacheLimit, timeout);
-        sessionHostPortCache = Cache.newSoftMemoryCache(cacheLimit, timeout);
+        if (server) {
+            sessionCache = Cache.newSoftMemoryCache(cacheLimit, timeout);
+            sessionHostPortCache = Cache.newSoftMemoryCache(cacheLimit, timeout);
+            keyHashMap = new ConcurrentHashMap<>();
+            // Should be "randomly generated" according to RFC 5077,
+            // but doesn't necessarily have to be a true random number.
+            currentKeyID = new Random(System.nanoTime()).nextInt();
+        } else {
+            sessionCache = Cache.newSoftMemoryCache(cacheLimit, timeout);
+            sessionHostPortCache = Cache.newSoftMemoryQueue(cacheLimit, timeout,
+                DEFAULT_MAX_QUEUE_SIZE);
+            keyHashMap = Map.of();
+        }
     }
 
     // Stateless sessions when available, but there is a cache
@@ -170,9 +191,63 @@ final class SSLSessionContextImpl implements SSLSessionContext {
         return cacheLimit;
     }
 
+    private void cleanupStatelessKeys() {
+        Iterator<Map.Entry<Integer, SessionTicketExtension.StatelessKey>> it =
+            keyHashMap.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, SessionTicketExtension.StatelessKey> entry = it.next();
+            SessionTicketExtension.StatelessKey k = entry.getValue();
+            if (k.isInvalid(this)) {
+                it.remove();
+                try {
+                    k.key.destroy();
+                } catch (Exception e) {
+                    // Suppress
+                }
+            }
+        }
+    }
+
+    // Package-private, used only from SessionTicketExtension.KeyState::getCurrentKey.
+    SessionTicketExtension.StatelessKey getKey(HandshakeContext hc) {
+        SessionTicketExtension.StatelessKey ssk = keyHashMap.get(currentKeyID);
+        if (ssk != null && !ssk.isExpired()) {
+            return ssk;
+        }
+        synchronized (this) {
+            // If the current key is no longer expired, it was already
+            // updated by a concurrent request, and we can return.
+            ssk = keyHashMap.get(currentKeyID);
+            if (ssk != null && !ssk.isExpired()) {
+                return ssk;
+            }
+            int newID = currentKeyID + 1;
+            ssk = new SessionTicketExtension.StatelessKey(hc, newID);
+            keyHashMap.put(Integer.valueOf(newID), ssk);
+            currentKeyID = newID;
+        }
+        // Check for and delete invalid keys every time we create a new stateless key.
+        cleanupStatelessKeys();
+        return ssk;
+    }
+
+    // Package-private, used only from SessionTicketExtension.KeyState::getKey.
+    SessionTicketExtension.StatelessKey getKey(int id) {
+        return keyHashMap.get(id);
+    }
+
     // package-private method, used ONLY by ServerHandshaker
     SSLSessionImpl get(byte[] id) {
         return (SSLSessionImpl)getSession(id);
+    }
+
+    // package-private method, find and remove session from cache
+    // return found session
+    SSLSessionImpl pull(byte[] id) {
+        if (id != null) {
+            return sessionCache.pull(new SessionId(id));
+        }
+        return null;
     }
 
     // package-private method, used ONLY by ClientHandshaker
@@ -206,12 +281,22 @@ final class SSLSessionContextImpl implements SSLSessionContext {
     // time it created, which is a little longer than the expected. So
     // please do check isTimedout() while getting entry from the cache.
     void put(SSLSessionImpl s) {
+        put(s, false);
+    }
+
+    /**
+     * Put an entry in the cache
+     * @param s SSLSessionImpl entry to be stored
+     * @param canQueue True if multiple entries may exist under one
+     *                 session entry.
+     */
+    void put(SSLSessionImpl s, boolean canQueue) {
         sessionCache.put(s.getSessionId(), s);
 
         // If no hostname/port info is available, don't add this one.
         if ((s.getPeerHost() != null) && (s.getPeerPort() != -1)) {
             sessionHostPortCache.put(
-                getKey(s.getPeerHost(), s.getPeerPort()), s);
+                getKey(s.getPeerHost(), s.getPeerPort()), s, canQueue);
         }
 
         s.setContext(this);
@@ -219,11 +304,17 @@ final class SSLSessionContextImpl implements SSLSessionContext {
 
     // package-private method, remove a cached SSLSession
     void remove(SessionId key) {
+        remove(key, false);
+    }
+    void remove(SessionId key, boolean isClient) {
         SSLSessionImpl s = sessionCache.get(key);
         if (s != null) {
             sessionCache.remove(key);
-            sessionHostPortCache.remove(
+            // A client keeps the cache entry for queued NST resumption.
+            if (!isClient) {
+                sessionHostPortCache.remove(
                     getKey(s.getPeerHost(), s.getPeerPort()));
+            }
         }
     }
 

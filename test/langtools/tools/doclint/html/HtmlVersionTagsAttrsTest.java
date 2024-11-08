@@ -1,11 +1,11 @@
 /*
  * @test /nodynamiccopyright/
- * @bug 8072945 8247957
+ * @bug 8072945 8247957 8266856
  * @summary test tags and attributes specific to the output HTML version
  * @library ..
  * @modules jdk.javadoc/jdk.javadoc.internal.doclint
  * @build DocLintTester
- * @run main DocLintTester -Xmaxerrs 200 -ref HtmlVersionTagsAttrsTest.out HtmlVersionTagsAttrsTest.java
+ * @run main DocLintTester -Xmsgs:all,-missing -Xmaxerrs 200 -ref HtmlVersionTagsAttrsTest.out HtmlVersionTagsAttrsTest.java
  */
 
 /**
@@ -100,10 +100,6 @@ public class HtmlVersionTagsAttrsTest {
      * </hgroup>
      * hgroup no longer supported in HTML5.
      * </section>
-     * <details>
-     * <summary>Summary</summary>
-     * <p>Details and Summary no longer supported in HTML5</p>
-     * </details>
      */
     public void notSupportedTags_html5() { }
 
@@ -151,7 +147,11 @@ public class HtmlVersionTagsAttrsTest {
      * <div class="desc">Desc</div>
      * </template>
      * <p>Test current time is <time>10:00</time> at night</p>
-     * <p>Test <wbr>WBR</wbr> text</p>
+     * <p>Test<wbr>text</p>
+     * <details>
+     * <summary>Summary</summary>
+     * <p>Details</p>
+     * </details>
      */
     public void SupportedTags_html5() { }
 

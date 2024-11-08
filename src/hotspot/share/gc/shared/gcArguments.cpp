@@ -24,12 +24,13 @@
  */
 
 #include "precompiled.hpp"
-#include "gc/shared/cardTableRS.hpp"
+#include "gc/shared/cardTable.hpp"
 #include "gc/shared/gcArguments.hpp"
 #include "logging/log.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/globals_extension.hpp"
+#include "utilities/formatBuffer.hpp"
 #include "utilities/macros.hpp"
 
 size_t HeapAlignment = 0;
@@ -38,10 +39,6 @@ size_t SpaceAlignment = 0;
 void GCArguments::initialize() {
   if (FullGCALot && FLAG_IS_DEFAULT(MarkSweepAlwaysCompactCount)) {
     MarkSweepAlwaysCompactCount = 1;  // Move objects every gc.
-  }
-
-  if (!UseParallelGC && FLAG_IS_DEFAULT(ScavengeBeforeFullGC)) {
-    FLAG_SET_DEFAULT(ScavengeBeforeFullGC, false);
   }
 
   if (GCTimeLimit == 100) {
@@ -73,7 +70,7 @@ size_t GCArguments::compute_heap_alignment() {
   // byte entry and the os page size is 4096, the maximum heap size should
   // be 512*4096 = 2MB aligned.
 
-  size_t alignment = CardTableRS::ct_max_alignment_constraint();
+  size_t alignment = CardTable::ct_max_alignment_constraint();
 
   if (UseLargePages) {
       // In presence of large pages we have to make sure that our
@@ -127,6 +124,11 @@ void GCArguments::initialize_heap_flags_and_sizes() {
     }
   }
 
+  if (FLAG_IS_CMDLINE(InitialHeapSize) && FLAG_IS_CMDLINE(MinHeapSize) &&
+      InitialHeapSize < MinHeapSize) {
+    vm_exit_during_initialization("Incompatible minimum and initial heap sizes specified");
+  }
+
   // Check heap parameter properties
   if (MaxHeapSize < 2 * M) {
     vm_exit_during_initialization("Too small maximum heap");
@@ -150,11 +152,6 @@ void GCArguments::initialize_heap_flags_and_sizes() {
     FLAG_SET_ERGO(MaxHeapSize, align_up(MaxHeapSize, HeapAlignment));
   }
 
-  if (FLAG_IS_CMDLINE(InitialHeapSize) && FLAG_IS_CMDLINE(MinHeapSize) &&
-      InitialHeapSize < MinHeapSize) {
-    vm_exit_during_initialization("Incompatible minimum and initial heap sizes specified");
-  }
-
   if (!FLAG_IS_DEFAULT(InitialHeapSize) && InitialHeapSize > MaxHeapSize) {
     FLAG_SET_ERGO(MaxHeapSize, InitialHeapSize);
   } else if (!FLAG_IS_DEFAULT(MaxHeapSize) && InitialHeapSize > MaxHeapSize) {
@@ -169,6 +166,13 @@ void GCArguments::initialize_heap_flags_and_sizes() {
   }
 
   FLAG_SET_ERGO(MinHeapDeltaBytes, align_up(MinHeapDeltaBytes, SpaceAlignment));
+
+  if (checked_cast<uint>(ObjectAlignmentInBytes) > GCCardSizeInBytes) {
+    err_msg message("ObjectAlignmentInBytes %u is larger than GCCardSizeInBytes %u",
+                    ObjectAlignmentInBytes, GCCardSizeInBytes);
+    vm_exit_during_initialization("Invalid combination of GCCardSizeInBytes and ObjectAlignmentInBytes",
+                                  message);
+  }
 
   DEBUG_ONLY(assert_flags();)
 }

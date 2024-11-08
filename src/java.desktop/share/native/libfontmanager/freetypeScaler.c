@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -46,6 +46,12 @@
 
 #include "fontscaler.h"
 
+#define CHECK_EXCEPTION(env, describe)                 \
+    if ((*(env))->ExceptionCheck(env)) {               \
+        if (describe) (*(env))->ExceptionDescribe(env);\
+        else          (*(env))->ExceptionClear(env);   \
+    }
+
 #define  ftFixed1  (FT_Fixed) (1 << 16)
 #define  FloatToFTFixed(f) (FT_Fixed)((f) * (float)(ftFixed1))
 #define  FTFixedToFloat(x) ((x) / (float)(ftFixed1))
@@ -88,7 +94,7 @@ typedef struct FTScalerContext {
 
 #ifdef DEBUG
 /* These are referenced in the freetype sources if DEBUG macro is defined.
-   To simplify work with debuging version of freetype we define
+   To simplify work with debugging version of freetype we define
    them here. */
 int z_verbose;
 void z_error(char *s) {}
@@ -97,12 +103,18 @@ void z_error(char *s) {}
 /**************** Error handling utilities *****************/
 
 static jmethodID invalidateScalerMID;
+static jboolean  debugFonts; // Stores the value of FontUtilities.debugFonts()
 
 JNIEXPORT void JNICALL
 Java_sun_font_FreetypeFontScaler_initIDs(
         JNIEnv *env, jobject scaler, jclass FFSClass) {
     invalidateScalerMID =
         (*env)->GetMethodID(env, FFSClass, "invalidateScaler", "()V");
+
+    jboolean ignoreException;
+    debugFonts = JNU_CallStaticMethodByName(env, &ignoreException,
+                                            "sun/font/FontUtilities",
+                                            "debugFonts", "()Z").z;
 }
 
 static void freeNativeResources(JNIEnv *env, FTScalerInfo* scalerInfo) {
@@ -137,6 +149,9 @@ static void invalidateJavaScaler(JNIEnv *env,
                                  FTScalerInfo* scalerInfo) {
     freeNativeResources(env, scalerInfo);
     (*env)->CallVoidMethod(env, scaler, invalidateScalerMID);
+    // NB: Exceptions must not be cleared (and therefore no JNI calls
+    // performed) after calling this method because it intentionally
+    // leaves an exception pending.
 }
 
 /******************* I/O handlers ***************************/
@@ -187,6 +202,7 @@ static unsigned long ReadTTFontFileFunc(FT_Stream stream,
                                           scalerInfo->font2D,
                                           sunFontIDs.ttReadBlockMID,
                                           bBuffer, offset, numBytes);
+            CHECK_EXCEPTION(env, debugFonts);
             if (bread < 0) {
                 return 0;
             } else {
@@ -206,7 +222,8 @@ static unsigned long ReadTTFontFileFunc(FT_Stream stream,
             (*env)->CallObjectMethod(env, scalerInfo->font2D,
                                      sunFontIDs.ttReadBytesMID,
                                      offset, numBytes);
-            /* If there's an OutofMemoryError then byteArray will be null */
+            CHECK_EXCEPTION(env, debugFonts);
+            /* If there's an OutOfMemoryError then byteArray will be null */
             if (byteArray == NULL) {
                 return 0;
             } else {
@@ -239,6 +256,7 @@ static unsigned long ReadTTFontFileFunc(FT_Stream stream,
                                       sunFontIDs.ttReadBlockMID,
                                       bBuffer, offset,
                                       scalerInfo->fontDataLength);
+        CHECK_EXCEPTION(env, debugFonts);
         if (bread <= 0) {
             return 0;
         } else if ((unsigned long)bread < numBytes) {
@@ -486,6 +504,8 @@ static double euclidianDistance(double a, double b) {
     return sqrt(a*a+b*b);
 }
 
+#define TOO_LARGE(a, b) (abs((int)(a / b)) > 32766)
+
 JNIEXPORT jlong JNICALL
 Java_sun_font_FreetypeFontScaler_createScalerContextNative(
         JNIEnv *env, jobject scaler, jlong pScaler, jdoubleArray matrix,
@@ -493,10 +513,9 @@ Java_sun_font_FreetypeFontScaler_createScalerContextNative(
     double dmat[4], ptsz;
     FTScalerContext *context =
             (FTScalerContext*) calloc(1, sizeof(FTScalerContext));
-    FTScalerInfo *scalerInfo =
-             (FTScalerInfo*) jlong_to_ptr(pScaler);
 
     if (context == NULL) {
+        free(context);
         invalidateJavaScaler(env, scaler, NULL);
         return (jlong) 0;
     }
@@ -506,11 +525,22 @@ Java_sun_font_FreetypeFontScaler_createScalerContextNative(
         //text can not be smaller than 1 point
         ptsz = 1.0;
     }
+    if (ptsz > 16384) {
+        ptsz = 16384;    // far enough from 32767
+        fm = TEXT_FM_ON; // avoids calculations which might overflow
+    }
     context->ptsz = (int)(ptsz * 64);
-    context->transform.xx =  FloatToFTFixed((float)dmat[0]/ptsz);
-    context->transform.yx = -FloatToFTFixed((float)dmat[1]/ptsz);
-    context->transform.xy = -FloatToFTFixed((float)dmat[2]/ptsz);
-    context->transform.yy =  FloatToFTFixed((float)dmat[3]/ptsz);
+    if (TOO_LARGE(dmat[0], ptsz) || TOO_LARGE(dmat[1], ptsz) ||
+        TOO_LARGE(dmat[2], ptsz) || TOO_LARGE(dmat[3], ptsz))
+    {
+        free(context);
+        return (jlong)0;
+    }
+
+    context->transform.xx =  FloatToFTFixed((float)(dmat[0]/ptsz));
+    context->transform.yx = -FloatToFTFixed((float)(dmat[1]/ptsz));
+    context->transform.xy = -FloatToFTFixed((float)(dmat[2]/ptsz));
+    context->transform.yy =  FloatToFTFixed((float)(dmat[3]/ptsz));
     context->aaType = aa;
     context->fmType = fm;
 
@@ -530,7 +560,8 @@ Java_sun_font_FreetypeFontScaler_createScalerContextNative(
     if ((aa != TEXT_AA_ON) && (fm != TEXT_FM_ON) &&
         !context->doBold && !context->doItalize &&
         (context->transform.yx == 0) && (context->transform.xy == 0) &&
-        (context->transform.xx > 0) && (context->transform.yy > 0))
+        (context->transform.xx > 0) && (context->transform.yy > 0) &&
+        (context->transform.xx == context->transform.yy))
     {
         context->useSbits = 1;
     }
@@ -1257,7 +1288,7 @@ static int allocateSpaceForGP(GPData* gpdata, int npoints, int ncontours) {
     maxCoords = 4*(npoints + 2*ncontours); //we may need to insert
                                            //up to n-1 intermediate points
 
-    /* first usage - allocate space and intialize all fields */
+    /* first usage - allocate space and initialize all fields */
     if (gpdata->pointTypes == NULL || gpdata->pointCoords == NULL) {
         gpdata->lenTypes  = maxTypes;
         gpdata->lenCoords = maxCoords;
@@ -1619,7 +1650,6 @@ Java_sun_font_FreetypeFontScaler_getGlyphPointNative(
         jlong pScaler, jint glyphCode, jint pointNumber) {
 
     FT_Outline* outline;
-    jobject point = NULL;
     jfloat x=0, y=0;
     FTScalerContext *context =
          (FTScalerContext*) jlong_to_ptr(pScalerContext);

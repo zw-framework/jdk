@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,7 +23,8 @@
 
 /*
  * @test
- * @bug      8250768 8261976
+ * @bug      8250768 8261976 8277300 8282452 8287597 8325325 8325874 8297879
+ *           8331947 8281533
  * @summary  test generated docs for items declared using preview
  * @library  ../../lib
  * @modules jdk.javadoc/jdk.javadoc.internal.tool
@@ -33,14 +34,12 @@
  */
 
 import java.nio.file.Paths;
-import java.text.MessageFormat;
-import java.util.ResourceBundle;
 import javadoc.tester.JavadocTester;
 
 public class TestPreview extends JavadocTester {
 
     public static void main(String... args) throws Exception {
-        TestPreview tester = new TestPreview();
+        var tester = new TestPreview();
         tester.runTests();
     }
 
@@ -56,35 +55,16 @@ public class TestPreview extends JavadocTester {
                 "m/pkg");
         checkExit(Exit.OK);
 
-        ResourceBundle bundle = ResourceBundle.getBundle("jdk.javadoc.internal.doclets.formats.html.resources.standard", ModuleLayer.boot().findModule("jdk.javadoc").get());
-
-        {
-            String zero = MessageFormat.format(bundle.getString("doclet.PreviewLeadingNote"), "<code>TestPreviewDeclaration</code>");
-            String one = MessageFormat.format(bundle.getString("doclet.Declared_Using_Preview"), "<code>TestPreviewDeclaration</code>", "<em>Sealed Classes</em>", "<code>sealed</code>");
-            String two = MessageFormat.format(bundle.getString("doclet.PreviewTrailingNote1"), "<code>TestPreviewDeclaration</code>");
-            String three = MessageFormat.format(bundle.getString("doclet.PreviewTrailingNote2"), new Object[0]);
-            String expectedTemplate = """
-                                      <div class="preview-block" id="preview-pkg.TestPreviewDeclaration"><span class="preview-label">{0}</span>
-                                      <ul class="preview-comment">
-                                      <li>{1}</li>
-                                      </ul>
-                                      <div class="preview-comment">{2}</div>
-                                      <div class="preview-comment">{3}</div>
-                                      </div>""";
-            String expected = MessageFormat.format(expectedTemplate, zero, one, two, three);
-            checkOutput("m/pkg/TestPreviewDeclaration.html", true, expected);
-        }
-
         checkOutput("m/pkg/TestPreviewDeclarationUse.html", true,
-                    "<code><a href=\"TestPreviewDeclaration.html\" title=\"interface in pkg\">TestPreviewDeclaration</a><sup><a href=\"TestPreviewDeclaration.html#preview-pkg.TestPreviewDeclaration\">PREVIEW</a></sup></code>");
+                    "<code><a href=\"TestPreviewDeclaration.html\" title=\"interface in pkg\">TestPreviewDeclaration</a></code>");
         checkOutput("m/pkg/TestPreviewAPIUse.html", true,
                 "<a href=\"" + doc + "java.base/preview/Core.html\" title=\"class or interface in preview\" class=\"external-link\">Core</a><sup><a href=\"" + doc + "java.base/preview/Core.html#preview-preview.Core\" title=\"class or interface in preview\" class=\"external-link\">PREVIEW</a>");
         checkOutput("m/pkg/DocAnnotation.html", true,
-                "<div class=\"preview-block\" id=\"preview-pkg.DocAnnotation\"><span class=\"preview-label\">");
+                "<span class=\"modifiers\">public @interface </span><span class=\"element-name type-name-label\">DocAnnotation</span>");
         checkOutput("m/pkg/DocAnnotationUse1.html", true,
-                "<div class=\"preview-block\" id=\"preview-pkg.DocAnnotationUse1\"><span class=\"preview-label\">");
+                "<div class=\"inheritance\">pkg.DocAnnotationUse1</div>");
         checkOutput("m/pkg/DocAnnotationUse2.html", true,
-                "<div class=\"preview-block\" id=\"preview-pkg.DocAnnotationUse2\"><span class=\"preview-label\">");
+                "<div class=\"inheritance\">pkg.DocAnnotationUse2</div>");
     }
 
     @Test
@@ -98,26 +78,135 @@ public class TestPreview extends JavadocTester {
         checkExit(Exit.OK);
 
         checkOutput("preview-list.html", true,
-                    """
-                    <div id="record-class">
-                    <div class="caption"><span>Record Classes</span></div>
-                    <div class="summary-table two-column-summary">
-                    <div class="table-header col-first">Record Class</div>
+                """
+                    <ul class="preview-feature-list checkboxes">
+                    <li><label for="feature-1">
+                    <input type="checkbox" id="feature-1" disabled checked onclick="toggleGlobal(this, '1', 3)">
+                    <span>2147483647: <a href="https://openjdk.org/jeps/2147483647">Test Feature (Preview)</a></span></label></li>
+                    <li><label for="feature-all">
+                    <input type="checkbox" id="feature-all" disabled checked onclick="toggleGlobal(this, 'all', 3)">
+                    <span>Toggle all</span></label></li>
+                    </ul>
+                    <h2 title="Contents">Contents</h2>
+                    <ul class="contents-list">
+                    <li id="contents-package"><a href="#package">Packages</a></li>
+                    <li id="contents-class"><a href="#class">Classes</a></li>
+                    <li id="contents-record-class"><a href="#record-class">Record Classes</a></li>
+                    <li id="contents-method"><a href="#method">Methods</a></li>
+                    </ul>
+                    """,
+                """
+                    <div id="package">
+                    <div class="table-tabs" role="tablist" aria-orientation="horizontal">
+                    <div class="caption"><span>Packages</span></div>
+                    </div>
+                    <div id="package.tabpanel" role="tabpanel" aria-labelledby="package-tab0">
+                    <div class="summary-table three-column-summary">
+                    <div class="table-header col-first sort-asc" onclick="sortTable(this, 0, 3)">Package</div>
+                    <div class="table-header col-second" onclick="sortTable(this, 1, 3)">Preview Feature</div>
                     <div class="table-header col-last">Description</div>
-                    <div class="col-summary-item-name even-row-color"><a href="java.base/preview/CoreRecord.html" title="class in preview">preview.CoreRecord</a><sup><a href="java.base/preview/CoreRecord.html#preview-preview.CoreRecord">PREVIEW</a></sup></div>
-                    <div class="col-last even-row-color"></div>
+                    <div class="col-summary-item-name even-row-color package package-tab1"><a href="java.base/preview/package-summary.html">preview</a><sup><a href="java.base/preview/package-summary.html#preview-preview">PREVIEW</a></sup></div>
+                    <div class="col-second even-row-color package package-tab1">Test Feature</div>
+                    <div class="col-last even-row-color package package-tab1">
+                    <div class="block">Preview package.</div>
                     </div>
                     """,
-                    """
-                    <div id="method">
-                    <div class="caption"><span>Methods</span></div>
-                    <div class="summary-table two-column-summary">
-                    <div class="table-header col-first">Method</div>
+                """
+                    <div id="record-class">
+                    <div class="table-tabs" role="tablist" aria-orientation="horizontal">
+                    <div class="caption"><span>Record Classes</span></div>
+                    </div>
+                    <div id="record-class.tabpanel" role="tabpanel" aria-labelledby="record-class-tab0">
+                    <div class="summary-table three-column-summary">
+                    <div class="table-header col-first sort-asc" onclick="sortTable(this, 0, 3)">Record Class</div>
+                    <div class="table-header col-second" onclick="sortTable(this, 1, 3)">Preview Feature</div>
                     <div class="table-header col-last">Description</div>
-                    <div class="col-summary-item-name even-row-color"><a href="java.base/preview/CoreRecordComponent.html#i()">preview.CoreRecordComponent.i()</a><sup><a href="java.base/preview/CoreRecordComponent.html#preview-i()">PREVIEW</a></sup></div>
-                    <div class="col-last even-row-color">
+                    <div class="col-summary-item-name even-row-color record-class record-class-tab1"><a href="java.base/preview/CoreRecord.html" title="class in preview">preview.CoreRecord</a><sup><a href="java.base/preview/CoreRecord.html#preview-preview.CoreRecord">PREVIEW</a></sup></div>
+                    <div class="col-second even-row-color record-class record-class-tab1">Test Feature</div>
+                    <div class="col-last even-row-color record-class record-class-tab1"></div>
+                    </div>
+                    """,
+                """
+                    <div id="method">
+                    <div class="table-tabs" role="tablist" aria-orientation="horizontal">
+                    <div class="caption"><span>Methods</span></div>
+                    </div>
+                    <div id="method.tabpanel" role="tabpanel" aria-labelledby="method-tab0">
+                    <div class="summary-table three-column-summary">
+                    <div class="table-header col-first sort-asc" onclick="sortTable(this, 0, 3)">Method</div>
+                    <div class="table-header col-second" onclick="sortTable(this, 1, 3)">Preview Feature</div>
+                    <div class="table-header col-last">Description</div>
+                    <div class="col-summary-item-name even-row-color method method-tab1"><a href="java.base/preview/CoreRecordComponent.html#i()">preview.CoreRecordComponent.i()</a><sup><a href="java.base/preview/CoreRecordComponent.html#preview-i()">PREVIEW</a></sup></div>
+                    <div class="col-second even-row-color method method-tab1">Test Feature</div>
+                    <div class="col-last even-row-color method method-tab1">
                     <div class="block">Returns the value of the <code>i</code> record component.</div>
                     </div>
                     """);
+
+        // 8325325: Breadcrumb navigation links should not contain PREVIEW link
+        checkOutput("java.base/preview/package-summary.html", true,
+                """
+                    <ol class="sub-nav-list">
+                    <li><a href="../module-summary.html">java.base</a></li>
+                    <li><a href="package-summary.html" class="current-selection">preview</a></li>
+                    </ol>""");
+        checkOutput("java.base/preview/Core.html", true,
+                """
+                    <ol class="sub-nav-list">
+                    <li><a href="../module-summary.html">java.base</a></li>
+                    <li><a href="package-summary.html">preview</a></li>
+                    <li><a href="Core.html" class="current-selection">Core</a></li>
+                    </ol>""",
+                """
+                    <div class="block">Preview feature. Links: <a href="CoreRecord.html" title="cla\
+                    ss in preview"><code>CoreRecord</code></a><sup><a href="CoreRecord.html#preview\
+                    -preview.CoreRecord">PREVIEW</a></sup>, <a href="CoreRecord.html" title="class \
+                    in preview"><code>core record</code></a><sup><a href="CoreRecord.html#preview-p\
+                    review.CoreRecord">PREVIEW</a></sup>,
+                     <a href="CoreRecord.html" title="class in preview">CoreRecord</a>, <a href="Co\
+                    reRecord.html" title="class in preview">core record</a>.</div>""",
+                """
+                    <li><a href="CoreRecord.html" title="class in preview"><code>CoreRecord</code><\
+                    /a><sup><a href="CoreRecord.html#preview-preview.CoreRecord">PREVIEW</a></sup><\
+                    /li>
+                    <li><a href="CoreRecord.html" title="class in preview">core record</a></li>""");
+
+        // 8331947: Support preview features without JEP should not be included in Preview API page
+        checkOutput("preview-list.html", false, "supportMethod");
+    }
+
+    @Test
+    public void test8277300() {
+        javadoc("-d", "out-8277300",
+                "--add-exports", "java.base/jdk.internal.javac=api2",
+                "--source-path", Paths.get(testSrc, "api2").toAbsolutePath().toString(),
+                "--show-packages=all",
+                "api2/api");
+        checkExit(Exit.OK);
+
+        checkOutput("api2/api/API.html", true,
+                    "<p><a href=\"#test()\"><code>test()</code></a></p>",
+                    "<p><a href=\"#testNoPreviewInSig()\"><code>testNoPreviewInSig()</code></a></p>",
+                    "title=\"class or interface in java.util\" class=\"external-link\">List</a>&lt;<a href=\"API.html\" title=\"class in api\">API</a><sup><a href=\"#preview-api.API\">PREVIEW</a></sup>&gt;");
+        checkOutput("api2/api/API2.html", true,
+                    "<a href=\"API.html#test()\"><code>API.test()</code></a><sup><a href=\"API.html#preview-api.API\">PREVIEW</a></sup>",
+                    "<a href=\"API.html#testNoPreviewInSig()\"><code>API.testNoPreviewInSig()</code></a><sup><a href=\"API.html#preview-api.API\">PREVIEW</a></sup>",
+                    "<a href=\"API3.html#test()\"><code>API3.test()</code></a><sup><a href=\"API3.html#preview-test()\">PREVIEW</a></sup>");
+        checkOutput("api2/api/API3.html", true,
+                    "<div class=\"block\"><a href=\"#test()\"><code>test()</code></a><sup><a href=\"#preview-test()\">PREVIEW</a></sup></div>");
+    }
+
+    @Test
+    public void test8282452() {
+        javadoc("-d", "out-8282452",
+                "--patch-module", "java.base=" + Paths.get(testSrc, "api").toAbsolutePath().toString(),
+                "--add-exports", "java.base/preview=m",
+                "--source-path", Paths.get(testSrc, "api").toAbsolutePath().toString(),
+                "--show-packages=all",
+                "preview");
+        checkExit(Exit.OK);
+
+        checkOutput("java.base/preview/NoPreview.html", false,
+                    "refers to one or more preview");
     }
 }

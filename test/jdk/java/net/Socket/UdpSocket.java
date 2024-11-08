@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2019, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,7 +23,7 @@
 
 /**
  * @test
- * @run testng/othervm -Dsun.net.maxDatagramSockets=32 UdpSocket
+ * @run testng/othervm -Djava.security.manager=allow -Dsun.net.maxDatagramSockets=32 UdpSocket
  * @summary Basic test for a Socket to a UDP socket
  */
 
@@ -37,15 +37,17 @@ import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.security.Permission;
 import java.util.Arrays;
-import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.net.BindException;
 
 import org.testng.annotations.Test;
 import static org.testng.Assert.*;
 
 @Test
 public class UdpSocket {
+
+    private static final int MAX_RETRIES = 3;
 
     /**
      * Test using the Socket API to send/receive datagrams
@@ -59,7 +61,6 @@ public class UdpSocket {
 
             int port = ((InetSocketAddress) dc.getLocalAddress()).getPort();
             try (Socket s = new Socket(loopback, port, false)) {
-
                 // send datagram with socket output stream
                 byte[] array1 = MESSAGE.getBytes("UTF-8");
                 s.getOutputStream().write(array1);
@@ -133,8 +134,22 @@ public class UdpSocket {
         }
     }
 
-    private Socket newUdpSocket() throws IOException {
-        return new Socket(InetAddress.getLoopbackAddress(), 8000, false);
+
+    private Socket newUdpSocket() throws IOException, InterruptedException {
+        BindException unexpected = null;
+        for (int i=0; i < MAX_RETRIES; i++) {
+            try {
+                return new Socket(InetAddress.getLoopbackAddress(), 8000, false);
+            } catch (BindException be) {
+                unexpected = be;
+                if (i != MAX_RETRIES - 1) {
+                    System.out.printf("BindException caught: retry Socket creation [%s/%s]%n",
+                            i + 1, MAX_RETRIES);
+                    Thread.sleep(10 + 10 * i);
+                }
+            }
+        }
+        throw unexpected;
     }
 
     private void closeAll(Deque<Socket> sockets) throws IOException {

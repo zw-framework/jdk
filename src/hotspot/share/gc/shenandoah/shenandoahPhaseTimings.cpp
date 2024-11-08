@@ -56,7 +56,7 @@ ShenandoahPhaseTimings::ShenandoahPhaseTimings(uint max_workers) :
   // Initialize everything to sane defaults
   for (uint i = 0; i < _num_phases; i++) {
 #define SHENANDOAH_WORKER_DATA_NULL(type, title) \
-    _worker_data[i] = NULL;
+    _worker_data[i] = nullptr;
     SHENANDOAH_PAR_PHASE_DO(,, SHENANDOAH_WORKER_DATA_NULL)
 #undef SHENANDOAH_WORKER_DATA_NULL
     _cycle_data[i] = uninitialized();
@@ -69,14 +69,14 @@ ShenandoahPhaseTimings::ShenandoahPhaseTimings(uint max_workers) :
     if (is_worker_phase(Phase(i))) {
       int c = 0;
 #define SHENANDOAH_WORKER_DATA_INIT(type, title) \
-      if (c++ != 0) _worker_data[i + c] = new ShenandoahWorkerData(NULL, title, _max_workers);
+      if (c++ != 0) _worker_data[i + c] = new ShenandoahWorkerData(nullptr, title, _max_workers);
       SHENANDOAH_PAR_PHASE_DO(,, SHENANDOAH_WORKER_DATA_INIT)
 #undef SHENANDOAH_WORKER_DATA_INIT
     }
   }
 
   _policy = ShenandoahHeap::heap()->shenandoah_policy();
-  assert(_policy != NULL, "Can not be NULL");
+  assert(_policy != nullptr, "Can not be null");
 }
 
 ShenandoahPhaseTimings::Phase ShenandoahPhaseTimings::worker_par_phase(Phase phase, ParPhase par_phase) {
@@ -89,7 +89,7 @@ ShenandoahPhaseTimings::Phase ShenandoahPhaseTimings::worker_par_phase(Phase pha
 ShenandoahWorkerData* ShenandoahPhaseTimings::worker_data(Phase phase, ParPhase par_phase) {
   Phase p = worker_par_phase(phase, par_phase);
   ShenandoahWorkerData* wd = _worker_data[p];
-  assert(wd != NULL, "Counter initialized: %s", phase_name(p));
+  assert(wd != nullptr, "Counter initialized: %s", phase_name(p));
   return wd;
 }
 
@@ -137,17 +137,21 @@ bool ShenandoahPhaseTimings::is_root_work_phase(Phase phase) {
   }
 }
 
-void ShenandoahPhaseTimings::set_cycle_data(Phase phase, double time) {
+void ShenandoahPhaseTimings::set_cycle_data(Phase phase, double time, bool should_aggregate) {
+  const double cycle_data = _cycle_data[phase];
+  if (should_aggregate) {
+    _cycle_data[phase] = (cycle_data == uninitialized()) ? time :  (cycle_data + time);
+  } else {
 #ifdef ASSERT
-  double d = _cycle_data[phase];
-  assert(d == uninitialized(), "Should not be set yet: %s, current value: %lf", phase_name(phase), d);
+    assert(cycle_data == uninitialized(), "Should not be set yet: %s, current value: %lf", phase_name(phase), cycle_data);
 #endif
-  _cycle_data[phase] = time;
+    _cycle_data[phase] = time;
+  }
 }
 
-void ShenandoahPhaseTimings::record_phase_time(Phase phase, double time) {
+void ShenandoahPhaseTimings::record_phase_time(Phase phase, double time, bool should_aggregate) {
   if (!_policy->is_at_shutdown()) {
-    set_cycle_data(phase, time);
+    set_cycle_data(phase, time, should_aggregate);
   }
 }
 
@@ -219,7 +223,7 @@ void ShenandoahPhaseTimings::flush_cycle_to_global() {
       _global_data[i].add(_cycle_data[i]);
       _cycle_data[i] = uninitialized();
     }
-    if (_worker_data[i] != NULL) {
+    if (_worker_data[i] != nullptr) {
       _worker_data[i]->reset();
     }
   }
@@ -243,7 +247,7 @@ void ShenandoahPhaseTimings::print_cycle_on(outputStream* out) const {
         }
       }
 
-      if (_worker_data[i] != NULL) {
+      if (_worker_data[i] != nullptr) {
         out->print(", workers (us): ");
         for (uint c = 0; c < _max_workers; c++) {
           double tv = _worker_data[i]->get(c);
@@ -326,4 +330,3 @@ ShenandoahWorkerTimingsTracker::~ShenandoahWorkerTimingsTracker() {
     _event.commit(GCId::current(), _worker_id, ShenandoahPhaseTimings::phase_name(cur_phase));
   }
 }
-

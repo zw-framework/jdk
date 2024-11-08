@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2016, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,6 +33,11 @@ public class Helper {
     }
 
     @jdk.internal.vm.annotation.ForceInline
+    public static int StringCodingCountPositives(byte[] ba, int off, int len) {
+        return StringCoding.countPositives(ba, off, len);
+    }
+
+    @jdk.internal.vm.annotation.ForceInline
     public static byte[] compressByte(byte[] src, int srcOff, int dstSize, int dstOff, int len) {
         byte[] dst = new byte[dstSize];
         StringUTF16.compress(src, srcOff, dst, dstOff, len);
@@ -40,10 +45,20 @@ public class Helper {
     }
 
     @jdk.internal.vm.annotation.ForceInline
+    public static int compress(byte[] src, int srcOff, byte[] dst, int dstOff, int len) {
+        return StringUTF16.compress(src, srcOff, dst, dstOff, len);
+    }
+
+    @jdk.internal.vm.annotation.ForceInline
     public static byte[] compressChar(char[] src, int srcOff, int dstSize, int dstOff, int len) {
         byte[] dst = new byte[dstSize];
         StringUTF16.compress(src, srcOff, dst, dstOff, len);
         return dst;
+    }
+
+    @jdk.internal.vm.annotation.ForceInline
+    public static int compress(char[] src, int srcOff, byte[] dst, int dstOff, int len) {
+        return StringUTF16.compress(src, srcOff, dst, dstOff, len);
     }
 
     @jdk.internal.vm.annotation.ForceInline
@@ -70,6 +85,11 @@ public class Helper {
         char[] dst = new char[dstSize];
         StringUTF16.getChars(value, srcBegin, srcEnd, dst, dstBegin);
         return dst;
+    }
+
+    @jdk.internal.vm.annotation.ForceInline
+    public static char getChar(byte[] value, int index) {
+        return StringUTF16.getChar(value, index);
     }
 
     public static void putCharSB(byte[] val, int index, int c) {
@@ -113,11 +133,17 @@ public class Helper {
     }
 
     public static int putCharsAt(byte[] value, int i, char c1, char c2, char c3, char c4) {
-        return StringUTF16.putCharsAt(value, i, c1, c2, c3, c4);
+        int end = i + 4;
+        StringUTF16.checkBoundsBeginEnd(i, end, value);
+        StringUTF16.putCharsAt(value, i, c1, c2, c3, c4);
+        return end;
     }
 
     public static int putCharsAt(byte[] value, int i, char c1, char c2, char c3, char c4, char c5) {
-        return StringUTF16.putCharsAt(value, i, c1, c2, c3, c4, c5);
+        int end = i + 5;
+        StringUTF16.checkBoundsBeginEnd(i, end, value);
+        StringUTF16.putCharsAt(value, i, c1, c2, c3, c4, c5);
+        return end;
     }
 
     public static char charAt(byte[] value, int index) {

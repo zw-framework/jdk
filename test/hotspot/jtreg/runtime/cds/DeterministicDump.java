@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,7 +25,7 @@
  * @test
  * @bug 8241071
  * @summary The same JDK build should always generate the same archive file (no randomness).
- * @requires vm.cds
+ * @requires vm.cds & vm.flagless
  * @library /test/lib
  * @run driver DeterministicDump
  */
@@ -50,14 +50,15 @@ public class DeterministicDump {
     public static void doTest(boolean compressed) throws Exception {
         ArrayList<String> baseArgs = new ArrayList<>();
 
-        // Use the same heap size as make/Images.gmk
+        // Try to reduce indeterminism of GC heap sizing and evacuation.
         baseArgs.add("-Xmx128M");
+        baseArgs.add("-Xms128M");
+        baseArgs.add("-Xmn120M");
 
         if (Platform.is64bit()) {
-            // These options are available only on 64-bit.
+            // This option is available only on 64-bit.
             String sign = (compressed) ?  "+" : "-";
             baseArgs.add("-XX:" + sign + "UseCompressedOops");
-            baseArgs.add("-XX:" + sign + "UseCompressedClassPointers");
         }
 
         String baseArchive = dump(baseArgs);
@@ -78,9 +79,13 @@ public class DeterministicDump {
     static String dump(ArrayList<String> args, String... more) throws Exception {
         String logName = "SharedArchiveFile" + (id++);
         String archiveName = logName + ".jsa";
+        String mapName = logName + ".map";
         CDSOptions opts = (new CDSOptions())
-            .addPrefix("-Xlog:cds=debug")
+            .addPrefix("-Xint") // Override any -Xmixed/-Xcomp flags from jtreg -vmoptions
+            .addPrefix("-Xlog:cds=debug,gc=debug")
+            .addPrefix("-Xlog:cds+map*=trace:file=" + mapName + ":none:filesize=0")
             .setArchiveName(archiveName)
+            .addSuffix(args)
             .addSuffix(more);
         CDSTestUtils.createArchiveAndCheck(opts);
 

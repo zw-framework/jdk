@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2002, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -99,7 +99,7 @@ class AutoJavaString {
   const char* m_buf;
 
 public:
-  // check env->ExceptionOccurred() after ctor
+  // check env->ExceptionCheck() after ctor
   AutoJavaString(JNIEnv* env, jstring str)
     : m_env(env), m_str(str), m_buf(str == nullptr ? nullptr : env->GetStringUTFChars(str, nullptr)) {
   }
@@ -122,10 +122,11 @@ class AutoJavaByteArray {
   jint releaseMode;
 
 public:
-  // check env->ExceptionOccurred() after ctor
+  // check env->ExceptionCheck() after ctor
   AutoJavaByteArray(JNIEnv* env, jbyteArray byteArray, jint releaseMode = JNI_ABORT)
-    : env(env), byteArray(byteArray), releaseMode(releaseMode),
-      bytePtr(env->GetByteArrayElements(byteArray, nullptr)) {
+    : env(env), byteArray(byteArray),
+      bytePtr(env->GetByteArrayElements(byteArray, nullptr)),
+      releaseMode(releaseMode) {
   }
 
   ~AutoJavaByteArray() {
@@ -163,8 +164,8 @@ static jmethodID addThread_ID                   = 0;
 static jmethodID createClosestSymbol_ID         = 0;
 static jmethodID setThreadIntegerRegisterSet_ID = 0;
 
-#define CHECK_EXCEPTION_(value) if (env->ExceptionOccurred()) { return value; }
-#define CHECK_EXCEPTION if (env->ExceptionOccurred()) { return; }
+#define CHECK_EXCEPTION_(value) if (env->ExceptionCheck()) { return value; }
+#define CHECK_EXCEPTION if (env->ExceptionCheck()) { return; }
 
 #define THROW_NEW_DEBUGGER_EXCEPTION_(str, value) { \
                           throwNewDebuggerException(env, str); return value; }
@@ -184,11 +185,12 @@ static void throwNewDebuggerException(JNIEnv* env, const char* errMsg) {
   do { \
     const HRESULT hr = (v); \
     if (hr != S_OK) { \
-      AutoArrayPtr<char> errmsg(new char[strlen(str) + 32]); \
+      size_t errmsg_size = strlen(str) + 32; \
+      AutoArrayPtr<char> errmsg(new char[errmsg_size]); \
       if (errmsg == nullptr) { \
         THROW_NEW_DEBUGGER_EXCEPTION_(str, retValue); \
       } else { \
-        sprintf(errmsg, "%s (hr: 0x%08X)", str, hr); \
+        snprintf(errmsg, errmsg_size, "%s (hr: 0x%08X)", str, hr); \
         THROW_NEW_DEBUGGER_EXCEPTION_(errmsg, retValue); \
       } \
     } \
@@ -397,8 +399,11 @@ static bool setImageAndSymbolPath(JNIEnv* env, jobject obj) {
   IDebugSymbols* ptrIDebugSymbols = (IDebugSymbols*)env->GetLongField(obj, ptrIDebugSymbols_ID);
   CHECK_EXCEPTION_(false);
 
-  ptrIDebugSymbols->SetImagePath(imagePath);
-  ptrIDebugSymbols->SetSymbolPath(symbolPath);
+  COM_VERIFY_OK_(ptrIDebugSymbols->SetImagePath(imagePath),
+                 "Windbg Error: SetImagePath failed!", false);
+  COM_VERIFY_OK_(ptrIDebugSymbols->SetSymbolPath(symbolPath),
+                 "Windbg Error: SetSymbolPath failed!", false);
+
   return true;
 }
 
@@ -625,7 +630,7 @@ static bool addThreads(JNIEnv* env, jobject obj) {
     ptrRegs[REG_INDEX(RIP)] = context.Rip;
 #endif
 
-    env->ReleaseLongArrayElements(regs, ptrRegs, JNI_COMMIT);
+    env->ReleaseLongArrayElements(regs, ptrRegs, 0);
     CHECK_EXCEPTION_(false);
 
     env->CallVoidMethod(obj, setThreadIntegerRegisterSet_ID, (jlong)ptrThreadIds[t], regs);
@@ -772,7 +777,7 @@ JNIEXPORT jlong JNICALL Java_sun_jvm_hotspot_debugger_windbg_WindbgDebuggerLocal
   ULONG id = 0;
   HRESULT hr = ptrIDebugSystemObjects->GetThreadIdBySystemId((ULONG)sysId, &id);
   if (hr != S_OK) {
-    // This is not considered fatal and does happen on occassion, usually with an
+    // This is not considered fatal and does happen on occasion, usually with an
     // 0x80004002 "No such interface supported". The root cause is not fully understood,
     // but by ignoring this error and returning NULL, stacking walking code will get
     // null registers and fallback to using the "last java frame" if setup.
@@ -827,6 +832,8 @@ JNIEXPORT jstring JNICALL Java_sun_jvm_hotspot_debugger_windbg_WindbgDebuggerLoc
   return res;
 }
 
+#define SYMBOL_BUFSIZE 512
+
 /*
  * Class:     sun_jvm_hotspot_debugger_windbg_WindbgDebuggerLocal
  * Method:    lookupByName0
@@ -850,10 +857,22 @@ JNIEXPORT jlong JNICALL Java_sun_jvm_hotspot_debugger_windbg_WindbgDebuggerLocal
   if (ptrIDebugSymbols->GetOffsetByName(name, &offset) != S_OK) {
     return (jlong) 0;
   }
+
+  // See JDK-8311993: WinDbg intermittently returns offset of "module!class::`vftable'" symbol
+  // when requested for decorated "class" or "class*" (i.e. "??_7class@@6B@"/"??_7class*@@6B@").
+  // As a workaround check if returned symbol contains requested symbol.
+  ULONG64 disp = 0L;
+  char buf[SYMBOL_BUFSIZE];
+  memset(buf, 0, sizeof(buf));
+  if (ptrIDebugSymbols->GetNameByOffset(offset, buf, sizeof(buf), 0, &disp) == S_OK) {
+    if (strstr(buf, name) == nullptr) {
+      return (jlong)0;
+    }
+  }
+
   return (jlong) offset;
 }
 
-#define SYMBOL_BUFSIZE 512
 /*
  * Class:     sun_jvm_hotspot_debugger_windbg_WindbgDebuggerLocal
  * Method:    lookupByAddress0

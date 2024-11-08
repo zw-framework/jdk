@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2019, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,7 +25,8 @@
 #ifndef SHARE_GC_SHARED_OOPSTORAGESET_HPP
 #define SHARE_GC_SHARED_OOPSTORAGESET_HPP
 
-#include "memory/allocation.hpp"
+#include "nmt/memTag.hpp"
+#include "oops/oop.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/enumIterator.hpp"
 #include "utilities/globalDefinitions.hpp"
@@ -38,7 +39,7 @@ class OopStorageSet : public AllStatic {
 
   // Must be updated when new OopStorages are introduced
   static const uint strong_count = 4 JVMTI_ONLY(+ 1);
-  static const uint weak_count = 5 JVMTI_ONLY(+ 1) JFR_ONLY(+ 1);
+  static const uint weak_count = 8 JVMTI_ONLY(+ 1) JFR_ONLY(+ 1);
 
   static const uint all_count = strong_count + weak_count;
   static const uint all_start = 0;
@@ -79,8 +80,8 @@ public:
   static OopStorage* storage(WeakId id) { return get_storage(id); }
   static OopStorage* storage(Id id) { return get_storage(id); }
 
-  static OopStorage* create_strong(const char* name);
-  static OopStorage* create_weak(const char* name);
+  static OopStorage* create_strong(const char* name, MemTag mem_tag);
+  static OopStorage* create_weak(const char* name, MemTag mem_tag);
 
   // Support iteration over the storage objects.
   template<typename StorageId> class Range;
@@ -89,6 +90,8 @@ public:
   template <typename Closure>
   static void strong_oops_do(Closure* cl);
 
+  // Debugging: print location info, if in storage.
+  static bool print_containing(const void* addr, outputStream* st);
 };
 
 ENUMERATOR_VALUE_RANGE(OopStorageSet::StrongId,

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2016, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -62,6 +62,8 @@ import java.util.Set;
  * socket's class for the equivalent method to set/get a socket option or retrieve available socket options.
  *
  * @see java.nio.channels.NetworkChannel
+ *
+ * @since 1.8
  */
 @Deprecated(since = "16")
 public class Sockets {
@@ -301,7 +303,6 @@ public class Sockets {
         return isReusePortAvailable;
     }
 
-    @SuppressWarnings("removal")
     private static Map<Class<?>,Set<SocketOption<?>>> optionSets() {
         Map<Class<?>,Set<SocketOption<?>>> options = new HashMap<>();
         boolean incomingNapiIdsupported = PlatformSocketOptions.get().incomingNapiIdSupported();
